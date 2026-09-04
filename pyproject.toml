@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "androremote"
+version = "1.0.0"
+description = "Headless Android remote-management agent & C2 server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0",
+    "cryptography>=42.0",
+]
+
+[project.scripts]
+androremote = "androremote.cli:main"
+c2 = "androremote.c2:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["androremote*"]
