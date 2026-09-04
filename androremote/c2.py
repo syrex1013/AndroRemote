@@ -1104,11 +1104,10 @@ def c2_completer(text, state):
 
 
 def setup_autocomplete():
-    readline.parse_and_bind("tab: complete")
-    try:
+    if "libedit" in getattr(readline, "__doc__", ""):
         readline.parse_and_bind("bind ^I rl_complete")
-    except Exception:
-        pass
+    else:
+        readline.parse_and_bind("tab: complete")
     readline.set_completer_delims(" \t\n")
     readline.set_completer(c2_completer)
 
