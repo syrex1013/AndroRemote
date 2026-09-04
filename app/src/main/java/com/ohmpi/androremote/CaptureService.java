@@ -43,7 +43,7 @@ public class CaptureService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Notification n = new Notification.Builder(this, CHANNEL)
-                .setSmallIcon(R.drawable.avatar_anim)
+                .setSmallIcon(R.drawable.ic_notify)
                 .setContentTitle("")
                 .setContentText("")
                 .setOngoing(true)
