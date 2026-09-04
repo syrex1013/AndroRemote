@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ax_desc" translatable="false">Remote management: touch input, typing and install confirmations. Required for remote control and automatic updates.</string>
+</resources>
