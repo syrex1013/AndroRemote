@@ -1208,8 +1208,12 @@ COMMAND_INFO = {
                 "Injects text into the currently focused EditText using accessibility."),
     "gaction": ("device", "/gaction <action>", "Perform global system navigation",
                 "Triggers Android accessibility global action.\nValid actions: back, home, recents, notifications, quicksettings, power, lock, screenshot\nExample:\n  /gaction home"),
-    "wake": ("device", "/wake", "Wake up device screen",
-             "Acquires a temporary wake lock to turn the device screen on."),
+    "wake": ("device", "/wake [secs]", "Wake up device screen",
+             "Acquires a bright wake lock to turn the screen on (default 10s, max 300s).\nExample:\n  /wake\n  /wake 60"),
+    "sleep": ("device", "/sleep", "Lock screen / turn display off",
+              "Locks the keyguard and turns the screen off via the accessibility global action (requires axenable).\nAlias for /gaction lock."),
+    "unlock": ("device", "/unlock <pin>", "Wake & dismiss PIN keyguard",
+               "Wakes the screen, swipes up the lockscreen bouncer, types the PIN via accessibility and confirms. Needs accessibility service.\nBest-effort — OEM lockscreen implementations vary.\nExample:\n  /unlock 4821"),
     "vol": ("device", "/vol [level|up|down|mute]", "Get or adjust audio volume",
             "Queries or sets device audio volume.\nExample:\n  /vol up\n  /vol 10"),
     "clipset": ("device", "/clipset <text>", "Set device clipboard text",
@@ -1783,7 +1787,14 @@ def dispatch(argv):
         else:
             show_result(send_and_wait("GACTION " + rest[0]) or "")
     elif op == "wake":
-        show_result(send_and_wait("WAKE") or "")
+        show_result(send_and_wait("WAKE " + (rest[0] if rest else "")) or "")
+    elif op == "sleep":
+        show_result(send_and_wait("SLEEP") or "")
+    elif op == "unlock":
+        if not rest:
+            usage("unlock <pin>")
+        else:
+            show_result(send_and_wait("UNLOCK " + rest[0]) or "")
     elif op == "vol":
         show_result(send_and_wait("VOL " + (rest[0] if rest else "")) or "")
     elif op == "clipset":

@@ -209,6 +209,9 @@ def cmd_tap(a): print(one_shot("TAP %s %s" % (a.x, a.y))[0])
 def cmd_swipe(a): print(one_shot("SWIPE %s %s %s %s %s" % (a.x1, a.y1, a.x2, a.y2, a.ms))[0])
 def cmd_settext(a): print(one_shot("SETTEXT " + a.text)[0])
 def cmd_gaction(a): print(one_shot("GACTION " + a.name)[0])
+def cmd_sleep(a): print(one_shot("SLEEP")[0])
+def cmd_unlock(a): print(one_shot("UNLOCK " + a.pin)[0])
+
 def cmd_installstatus(a): print(one_shot("INSTALLSTATUS")[0])
 
 
@@ -270,6 +273,8 @@ def build_parser(prog="androremote adb"):
     s = sub.add_parser("gaction", help="Trigger global action (back, home, recents, etc.)"); s.add_argument("name"); s.set_defaults(fn=cmd_gaction)
     sub.add_parser("installstatus", help="Get status of last package install").set_defaults(fn=cmd_installstatus)
     sub.add_parser("wake", help="Wake device screen").set_defaults(fn=cmd_wake)
+    sub.add_parser("sleep", help="Lock screen / turn display off").set_defaults(fn=cmd_sleep)
+    s = sub.add_parser("unlock", help="Wake and dismiss PIN keyguard"); s.add_argument("pin"); s.set_defaults(fn=cmd_unlock)
     s = sub.add_parser("vol", help="Query or set volume"); s.add_argument("v", nargs="?"); s.set_defaults(fn=cmd_vol)
     s = sub.add_parser("clipset", help="Set clipboard content"); s.add_argument("text"); s.set_defaults(fn=cmd_clipset)
     sub.add_parser("clipget", help="Get clipboard content").set_defaults(fn=cmd_clipget)

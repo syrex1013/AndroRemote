@@ -130,4 +130,81 @@ public class RemoteAccessibilityService extends AccessibilityService {
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
         return focus.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
     }
+
+    /**
+     * Best-effort keyguard unlock: swipe up to reveal the PIN bouncer, then
+     * type the PIN into the focused entry field. Lockscreens usually
+     * auto-submit once the full PIN length is entered; a trailing enter key
+     * is clicked if one is found. OEM-dependent.
+     */
+    String unlock(String pin) {
+        try {
+            // 1. dismiss the lockscreen shade/bouncer: swipe up from bottom center
+            swipe(getScreenWidth() / 2f, getScreenHeight() * 0.9f,
+                    getScreenWidth() / 2f, getScreenHeight() * 0.25f, 250);
+            Thread.sleep(900);
+
+            // 2. focus may already be the PIN field; otherwise tap it
+            AccessibilityNodeInfo focus = findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            if (focus == null || !focus.isEditable()) {
+                AccessibilityNodeInfo root = getRootInActiveWindow();
+                if (root != null) {
+                    AccessibilityNodeInfo field = findEditable(root);
+                    if (field != null && field.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                        Thread.sleep(400);
+                    }
+                }
+            }
+
+            // 3. type the PIN
+            focus = findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+            if (focus == null || !focus.isEditable()) return "ERR unlock: no focused PIN field on lockscreen";
+            Bundle args = new Bundle();
+            args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, pin);
+            if (!focus.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args))
+                return "ERR unlock: PIN entry rejected (lockscreen may block accessibility)";
+
+            Thread.sleep(600);
+            // 4. press enter if the lockscreen shows one (most auto-submit)
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                for (String label : new String[]{"Enter", "OK", "Done", "Submit"}) {
+                    List<AccessibilityNodeInfo> nodes = root.findAccessibilityNodeInfosByText(label);
+                    if (nodes != null && !nodes.isEmpty()) {
+                        AccessibilityNodeInfo n = nodes.get(0);
+                        AccessibilityNodeInfo cur = n;
+                        int hops = 0;
+                        while (cur != null && !cur.isClickable() && hops++ < 6) cur = cur.getParent();
+                        if (cur != null) cur.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                        break;
+                    }
+                }
+            }
+            Thread.sleep(800);
+            android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(KEYGUARD_SERVICE);
+            boolean locked = km != null && km.isKeyguardLocked();
+            return locked ? "ERR unlock: PIN typed but keyguard still locked (wrong PIN or blocked field)"
+                          : "OK unlock (keyguard dismissed)";
+        } catch (Exception e) {
+            return "ERR unlock: " + e;
+        }
+    }
+
+    private AccessibilityNodeInfo findEditable(AccessibilityNodeInfo node) {
+        if (node == null) return null;
+        if (node.isEditable()) return node;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo hit = findEditable(node.getChild(i));
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private float getScreenWidth() {
+        return getResources().getDisplayMetrics().widthPixels;
+    }
+
+    private float getScreenHeight() {
+        return getResources().getDisplayMetrics().heightPixels;
+    }
 }
