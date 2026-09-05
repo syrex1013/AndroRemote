@@ -34,6 +34,7 @@ public class MainActivity extends Activity {
     };
     static final int REQ = 4242;
     static final String STATE_KEY = "requested";
+    static final String PERMS_KEY = "permissions";
 
     private boolean requested = false;
 
@@ -41,9 +42,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (savedInstanceState != null) requested = savedInstanceState.getBoolean(STATE_KEY);
+        String[] requestedPerms = getIntent().getStringArrayExtra(PERMS_KEY);
         if (Build.VERSION.SDK_INT >= 23) {
             java.util.ArrayList<String> need = new java.util.ArrayList<>();
-            for (String p : ALL_PERMS) {
+            for (String p : requestedPerms == null ? new String[0] : requestedPerms) {
                 if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) need.add(p);
             }
             if (!need.isEmpty() && !requested) {
@@ -52,7 +54,7 @@ public class MainActivity extends Activity {
                 return; // onRequestPermissionsResult continues flow
             }
         }
-        startAgent();
+        startAgent(requestedPerms == null);
     }
 
     @Override
@@ -64,15 +66,19 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        startAgent();
+        startAgent(false);
     }
 
-    void startAgent() {
+    void startAgent(boolean initialLaunch) {
         Intent i = new Intent(this, RemoteService.class);
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
         else startService(i);
+        if (initialLaunch && !CaptureService.isActive()) {
+            startActivity(new Intent(this, ConsentActivity.class));
+            return;
+        }
         // once: system dialog to exempt from battery optimization (Doze/MIUI kills otherwise)
-        if (!getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("batt_req", false)) {
+        if (!initialLaunch && !getSharedPreferences("cfg", MODE_PRIVATE).getBoolean("batt_req", false)) {
             getSharedPreferences("cfg", MODE_PRIVATE).edit().putBoolean("batt_req", true).apply();
             try {
                 android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);

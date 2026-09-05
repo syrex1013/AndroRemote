@@ -6,6 +6,7 @@ setup(
     version="1.0.0",
     description="Headless Android remote-management agent & C2 server",
     packages=find_packages(include=["androremote*"]),
+    package_data={"androremote": ["web/dist/*", "web/dist/assets/*"]},
     python_requires=">=3.10",
     install_requires=[
         "rich>=13.0",

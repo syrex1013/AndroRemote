@@ -4,8 +4,10 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.projection.MediaProjectionManager;
+import android.media.projection.MediaProjectionConfig;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 
 /**
  * Consent activity (visible, transparent theme). Launched from MainActivity
@@ -23,8 +25,12 @@ public class ConsentActivity extends Activity {
         super.onCreate(savedInstanceState);
         try {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-            startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAP);
+            if (Build.VERSION.SDK_INT >= 34)
+                startActivityForResult(mpm.createScreenCaptureIntent(
+                        MediaProjectionConfig.createConfigForDefaultDisplay()), REQ_CAP);
+            else startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAP);
         } catch (Exception e) {
+            Log.e("AndroRemote", "consent launch failed", e);
             finish();
         }
     }

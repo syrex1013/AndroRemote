@@ -20,3 +20,6 @@ c2 = "androremote.c2:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["androremote*"]
+
+[tool.setuptools.package-data]
+androremote = ["web/dist/*", "web/dist/assets/*"]

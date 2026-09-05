@@ -17,6 +17,7 @@ import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.IBinder;
 import android.view.WindowManager;
+import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -63,7 +64,7 @@ public class CaptureService extends Service {
                         @Override public void onStop() { release(); }
                     }, null);
                     setup();
-                } catch (Exception ignored) {}
+                } catch (Exception e) { Log.e("AndroRemote", "capture service setup failed", e); }
             }
         }
         return START_STICKY;
@@ -98,6 +99,8 @@ public class CaptureService extends Service {
     }
 
     /** Capture one full-screen PNG, or null if projection is not active. */
+    static boolean isActive() { return projection != null && reader != null; }
+
     static byte[] capture() {
         MediaProjection p = projection;
         ImageReader r = reader;
@@ -125,6 +128,7 @@ public class CaptureService extends Service {
                 crop.compress(Bitmap.CompressFormat.PNG, 100, bos);
                 return bos.toByteArray();
             } catch (Exception e) {
+                Log.e("AndroRemote", "capture failed", e);
                 return null;
             } finally {
                 if (img != null) img.close();

