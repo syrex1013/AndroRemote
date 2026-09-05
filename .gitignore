@@ -7,3 +7,7 @@ app/src/main/res/values/c2.xml
 .androremote/
 *.egg-info/
 dist/
+*.keystore
+*.jks
+*.key
+tunnel.json

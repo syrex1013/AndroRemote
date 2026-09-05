@@ -1477,7 +1477,7 @@ COMMAND_INFO = {
                 "Vibrates device for specified milliseconds.\nExample:\n  /vibrate 1000"),
     # upkeep
     "build": ("upkeep", "/build [url]", "Compile, sign & package agent APK",
-              "Runs build.sh to package the agent APK. Auto-bakes the active C2 tunnel URL and encryption key.\nExample:\n  /build\n  /build https://c2.threatvector.tech"),
+              "Runs build.sh to package the agent APK. Auto-bakes the active C2 tunnel URL and encryption key.\nExample:\n  /build\n  /build https://c2.yourdomain.com"),
     "update": ("upkeep", "/update <local.apk>", "Push & install APK update",
                "Uploads an APK to device and invokes silent package installer.\nExample:\n  /update build/apk/androremote.apk"),
     "installstatus": ("upkeep", "/installstatus", "Check status of last APK install",
