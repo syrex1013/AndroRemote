@@ -87,6 +87,8 @@ Build the APK with your designated server endpoint:
 ./build.sh https://c2.yourdomain.com
 ```
 
+The signing key is yours: `./build.sh` generates `keystore/release.keystore` and a random password in `keystore/.pass` on first run (both gitignored). Keep them — Android only accepts an update signed with the same key. Override with `KS=/path/to.keystore` and `KS_PASS=<password>`.
+
 Deploy and activate the agent over USB:
 
 ```bash

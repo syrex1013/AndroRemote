@@ -58,7 +58,7 @@ Two channels, both always active when configured:
 | `build.sh` | APK build (optional C2 URL argument) |
 | `app/src/main/java/com/ohmpi/androremote/` | `RemoteService` (TCP server + all ops), `C2Beacon` (HTTP beacon), `CaptureService` (MediaProjection screenshots), `MainActivity` (invisible; permissions + capture consent once, then finishes), `RemoteAccessibilityService` (input injection + install auto-confirm + keep-alive), `UpdateReceiver` (installer status), `NotifsListener` (notification log), `BootReceiver`, `SmsReceiver` |
 | `app/src/main/res/` | transparent launcher + notification icons (stealth), `values/c2.xml` (baked C2 URL) |
-| `keystore/release.keystore` | signing key, storepass `androremote` |
+| `keystore/` | your own signing key (gitignored, generated on first `./build.sh`) |
 | `build/apk/androremote.apk` | output |
 
 ## Installation
@@ -359,7 +359,7 @@ Notes:
 - Requires `axenable` first (accessibility **and** the `REQUEST_INSTALL_PACKAGES` appop). Both are checked in `perms`.
 - Auto-confirm window is time-boxed: 90s from `INSTALL` commit, re-armed 30s after success; it only clicks windows from `*packageinstaller*` packages.
 - If accessibility is not enabled, `INSTALL` still commits but the consent dialog waits for a human.
-- APK must be signed with the same key (`keystore/release.keystore`) or install fails (`installstatus` shows the reason). `INSTALLSTATUS` reports the last result from `files/install_status.txt`.
+- APK must be signed with the same key you signed the installed agent with (`keystore/release.keystore`, yours, generated on first build) or install fails (`installstatus` shows the reason). `INSTALLSTATUS` reports the last result from `files/install_status.txt`.
 - During replacement the process dies and the client briefly drops off `list`; it returns on the next beacon.
 
 ## Multiple clients

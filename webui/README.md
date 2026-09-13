@@ -1,32 +1,52 @@
-# React + TypeScript + Vite
+# AndroRemote web console
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Operator console for the C2 server: sessions, screen, control, data, files,
+terminal, cache and settings. React 19 + Vite + TypeScript + Tailwind v4 with
+shadcn/ui components.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The C2 server serves the built console from `androremote/web/dist`. For
+live-reload development, run the Vite dev server and point it at your C2 web UI:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+npm install
+npm run dev                      # http://localhost:5173
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`vite.config.ts` proxies `/api` to `http://127.0.0.1:8888`, the default
+`--web-port`. Point it elsewhere if you started the server on another port or
+host:
+
+```sh
+VITE_API_TARGET=http://10.0.0.5:9000 npm run dev
+```
+
+Start the server with the web UI enabled in another shell:
+
+```sh
+python3 androremote.py --web --web-port 8888
+```
+
+Without a reachable backend the console renders an explicit "API backend is not
+reachable" state with a retry, rather than empty screens.
+
+## Build
+
+`npm run build` type-checks and writes straight into `androremote/web/dist`,
+which is what the Python server serves (that directory is gitignored). Run it
+before starting the server if you changed anything under `src/`.
+
+## Lint
+
+```sh
+npm run lint
+```
+
+## Preferences
+
+Theme, snapshot refresh interval and rows per page are per-browser settings,
+edited in the console's Settings view and stored in `localStorage` under
+`arprefs`. Tunnel and listener configuration stays on the server command line
+(`c2.py --setup-tunnel`, `--web-port`, and the rest); the console only reports
+it.
