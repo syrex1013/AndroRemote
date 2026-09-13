@@ -1,6 +1,7 @@
 /* Global console state: snapshot polling, SSE live feed, terminal lines, token gate. */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, getToken, setToken, type LogEvent, type ResultEvent, type Snapshot } from "@/lib/api";
+import { usePrefs } from "@/lib/settings";
 
 export interface TermLine {
   ts: number;
@@ -13,6 +14,7 @@ export interface TermLine {
 
 interface ConsoleCtx {
   snapshot: Snapshot | null;
+  stateError: string | null;
   refreshState: () => Promise<void>;
   sseLive: boolean;
   events: LogEvent[];
@@ -34,7 +36,9 @@ export const useConsole = () => {
 };
 
 export function ConsoleProvider({ children }: { children: React.ReactNode }) {
+  const { refreshSec } = usePrefs();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [stateError, setStateError] = useState<string | null>(null);
   const [sseLive, setSseLive] = useState(false);
   const [events, setEvents] = useState<LogEvent[]>([]);
   const [termLines, setTermLines] = useState<TermLine[]>([]);
@@ -48,8 +52,10 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
       const snap = await api<Snapshot>("/api/state");
       snapshotAt.current = Date.now() / 1000;
       setSnapshot(snap);
+      setStateError(null);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) setGateOpen(true);
+      else setStateError(String(e instanceof Error ? e.message : e));
     }
   }, []);
 
@@ -83,9 +89,9 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const iv = setInterval(() => {
       if (document.visibilityState === "visible") refreshState();
-    }, 10000);
+    }, refreshSec * 1000);
     return () => clearInterval(iv);
-  }, [refreshState]);
+  }, [refreshState, refreshSec]);
 
   // SSE live feed
   useEffect(() => {
@@ -123,9 +129,9 @@ export function ConsoleProvider({ children }: { children: React.ReactNode }) {
   }, [snapshot]);
 
   const value = useMemo<Omit<ConsoleCtx, "liveUptime">>(() => ({
-    snapshot, refreshState, sseLive, events, termLines, pushTerm, gateOpen, submitToken, activeSession, tick,
+    snapshot, stateError, refreshState, sseLive, events, termLines, pushTerm, gateOpen, submitToken, activeSession, tick,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [snapshot, sseLive, events, termLines, gateOpen, tick]);
+  }), [snapshot, stateError, sseLive, events, termLines, gateOpen, tick]);
 
   // uptime ticker keeps cards live between snapshots
   useEffect(() => {

@@ -17,16 +17,26 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
+export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const tok = getToken();
   if (tok) headers["Authorization"] = `Bearer ${tok}`;
   const res = await fetch(path, { ...opts, headers });
   if (res.status === 401) throw new ApiError(401, "unauthorized");
-  let body: any = {};
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0];
+  if (!contentType.includes("application/json")) {
+    throw new ApiError(
+      res.status,
+      `${path} answered ${res.status} ${res.statusText} with ${contentType || "no content type"}, not JSON. The API backend is not reachable at this origin - start the C2 server with --web, or point the dev proxy at it with VITE_API_TARGET.`,
+    );
+  }
+  let body: unknown = {};
   try { body = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new ApiError(res.status, body.error || res.statusText);
-  return body as T;
+  if (!res.ok) {
+    const detail = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error : res.statusText;
+    throw new ApiError(res.status, detail);
+  }
+  return body as T; // shape is the caller's declared contract; content-type is validated above
 }
 
 export interface SessionInfo {
@@ -40,6 +50,7 @@ export interface PluginInfo { name: string; version: string; description: string
 export interface ServerInfo {
   uptime: number; port: number; tls: boolean; enc: boolean; key_fp: string | null;
   tunnel_url: string | null; tunnel_mode: string; tunnel_host: string | null;
+  tunnel_running: boolean; tunnel_alive: boolean;
   plugins: PluginInfo[]; web_port: number | null;
 }
 export interface Snapshot { server: ServerInfo; active: string | null; sessions: SessionInfo[] }
@@ -51,7 +62,7 @@ export interface ResultEvent {
 export interface SessionEvent { type: "session"; event: string; cid: string; tag?: string; model?: string }
 export type BusEvent = LogEvent | ResultEvent | SessionEvent;
 
-export const postOp = <T = any>(op: string, args: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
+export const postOp = <T = unknown>(op: string, args: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
   api<T>("/api/op", { method: "POST", body: JSON.stringify({ op, args, ...extra }) });
 
 export const runCmd = (cmd: string, cid: string | null) =>

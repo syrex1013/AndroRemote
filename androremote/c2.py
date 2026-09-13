@@ -1102,14 +1102,17 @@ def format_ls(raw_text, path="/sdcard", page=1):
 
     rows = []
     for item in lines:
-        is_dir = item.endswith("/")
+        name, _, sz = item.partition("\t")
+        is_dir = name.endswith("/")
         icon = "[bold cyan]DIR[/bold cyan]" if is_dir else "[dim]FILE[/dim]"
         name_style = "[bold cyan]" if is_dir else "[white]"
-        rows.append((icon, f"{name_style}{escape(item)}[/]"))
+        size = "" if is_dir or not sz.isdigit() else f"{int(sz):,} B"
+        rows.append((icon, f"{name_style}{escape(name)}[/]", f"[dim]{size}[/dim]"))
 
     columns = [
         ("Type", {"width": 6, "justify": "center"}),
         ("Name", {"style": "white"}),
+        ("Size", {"justify": "right"}),
     ]
     show_paginated_table(f"DIRECTORY · {escape(path or '/sdcard')}", columns, rows, page_size=25, start_page=page)
 

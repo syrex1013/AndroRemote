@@ -6,6 +6,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { usePrefs } from "@/lib/settings";
 
 export interface Column {
   key: string;
@@ -21,14 +22,16 @@ interface Props {
   rows: Record<string, any>[];
   /** render the trailing actions cell for a row */
   actions?: (row: Record<string, any>) => React.ReactNode;
+  /** rows per page; defaults to the operator preference */
   pageSize?: number;
   empty?: string;
   defaultSort?: { key: string; dir: "asc" | "desc" };
 }
 
-export function DataTable({ columns, rows, actions, pageSize = 15, empty = "no rows", defaultSort }: Props) {
+export function DataTable({ columns, rows, actions, pageSize, empty = "no rows", defaultSort }: Props) {
+  const { pageSize: prefPageSize } = usePrefs();
   const [page, setPage] = useState(0);
-  const [size, setSize] = useState(pageSize);
+  const [size, setSize] = useState(pageSize ?? prefPageSize);
   const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(defaultSort ?? null);
 
   const sorted = useMemo(() => {
@@ -114,7 +117,7 @@ export function DataTable({ columns, rows, actions, pageSize = 15, empty = "no r
       {/* pagination controls */}
       <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground">
         <span>
-          {sorted.length === 0 ? "0" : cur * size + 1}–{Math.min(sorted.length, (cur + 1) * size)} of {sorted.length}
+          {sorted.length === 0 ? "0" : cur * size + 1}-{Math.min(sorted.length, (cur + 1) * size)} of {sorted.length}
         </span>
         <Select
           value={String(size)}

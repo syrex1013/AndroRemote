@@ -94,7 +94,10 @@ def cmd_smslog(a): first, rest = one_shot("SMSLOG " + (a.name or "")); print(fir
 
 
 def cmd_get(a):
-    first, raw = one_shot("GET " + a.remote, 1)
+    try:
+        first, raw = one_shot("GET " + a.remote, 1)
+    except RuntimeError as e:
+        first, raw = str(e), b""
     if first.startswith("OK"):
         with open(a.local, "wb") as f:
             f.write(raw)
@@ -216,6 +219,7 @@ def cmd_installstatus(a): print(one_shot("INSTALLSTATUS")[0])
 
 
 def cmd_wake(a): print(one_shot("WAKE")[0])
+def cmd_fastpoll(a): print(one_shot("FASTPOLL " + (a.secs or ""))[0])
 def cmd_vol(a): first, rest = one_shot("VOL " + (a.v or "")); print(first); print(rest.decode("utf-8", "replace"), end="")
 def cmd_clipset(a): print(one_shot("CLIPSET " + a.text)[0])
 def cmd_clipget(a): print(one_shot("CLIPGET")[0])
@@ -276,6 +280,7 @@ def build_parser(prog="androremote adb"):
     s = sub.add_parser("gaction", help="Trigger global action (back, home, recents, etc.)"); s.add_argument("name"); s.set_defaults(fn=cmd_gaction)
     sub.add_parser("installstatus", help="Get status of last package install").set_defaults(fn=cmd_installstatus)
     sub.add_parser("wake", help="Wake device screen").set_defaults(fn=cmd_wake)
+    s = sub.add_parser("fastpoll", help="Arm low-latency polling"); s.add_argument("secs", nargs="?"); s.set_defaults(fn=cmd_fastpoll)
     sub.add_parser("sleep", help="Lock screen / turn display off").set_defaults(fn=cmd_sleep)
     s = sub.add_parser("unlock", help="Wake and dismiss PIN keyguard"); s.add_argument("pin"); s.set_defaults(fn=cmd_unlock)
     s = sub.add_parser("vol", help="Query or set volume"); s.add_argument("v", nargs="?"); s.set_defaults(fn=cmd_vol)

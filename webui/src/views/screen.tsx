@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  ChevronLeft, Circle, Home, Lock, Power, RefreshCw, MoonStar, Square, Play, Volume2, VolumeX, Bell,
+  ChevronLeft, Circle, Home, Loader2, Lock, Power, RefreshCw, MoonStar, Square, Play, TriangleAlert, Volume2, VolumeX, Bell, Moon,
 } from "lucide-react";
 import { postOp } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
@@ -26,6 +27,8 @@ export default function ScreenView() {
 
   const [img, setImg] = useState<string | null>(null);
   const [status, setStatus] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const [live, setLive] = useState(false);
   const [interval, setIntervalMs] = useState(5000);
   const [dims, setDims] = useState({ w: 1080, h: 2400 });
@@ -40,16 +43,20 @@ export default function ScreenView() {
     const cid = snapshot?.active;
     if (!cid || busy.current) return;
     busy.current = true;
+    setCapturing(true);
+    setErr(null);
     setStatus("capturing…");
     try {
       const r = await postOp<{ png?: string; bytes?: number; error?: string }>("screen");
-      if (r.error) { setStatus(r.error); }
+      if (r.error) { setErr(r.error); setStatus("capture failed"); }
       else {
         setImg("data:image/png;base64," + r.png);
+        setErr(null);
         setStatus(`${fmtBytes(r.bytes!)} · ${new Date().toTimeString().slice(0, 8)}`);
       }
-    } catch (e) { setStatus(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setErr(String(e instanceof Error ? e.message : e)); setStatus("capture failed"); }
     busy.current = false;
+    setCapturing(false);
   }, [snapshot?.active]);
 
   useEffect(() => { if (hasActive) capture(); }, [hasActive, capture]);
@@ -103,14 +110,15 @@ export default function ScreenView() {
   };
 
   if (!hasActive) return NO_SESSION;
-
   const s = activeSession()!;
 
   return (
     <div className="grid xl:grid-cols-[minmax(0,1fr)_300px] gap-4 max-w-[1400px]">
       <div className="space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" onClick={capture}><RefreshCw className="size-3.5" /> Capture</Button>
+          <Button size="sm" onClick={capture} disabled={capturing}>
+            <RefreshCw className={`size-3.5 ${capturing ? "animate-spin" : ""}`} /> {capturing ? "Capturing…" : "Capture"}
+          </Button>
           <div className="flex items-center gap-2 rounded-md border px-3 h-8">
             {live ? <Square className="size-3 text-primary" /> : <Play className="size-3 text-primary" />}
             <span className="text-xs font-mono">live</span>
@@ -125,30 +133,59 @@ export default function ScreenView() {
             </SelectContent>
           </Select>
           <span className="flex-1" />
-          <span className="text-[11px] font-mono text-muted-foreground">{status}</span>
+          <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{status}</span>
         </div>
 
-        <div className="relative rounded-2xl border bg-[#070b11] shadow-lg min-h-[420px] flex items-center justify-center p-4 overflow-hidden">
+        <AnimatePresence mode="wait">
+          {err && (
+            <motion.div key="err" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 flex items-start gap-2">
+              <TriangleAlert className="size-4 text-destructive shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="font-mono text-xs text-destructive break-words">{err}</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                  Open the AndroRemote app on the device once to grant screen capture, then retry.
+                </p>
+                <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={capture} disabled={capturing}>
+                  <RefreshCw className={`size-3 mr-1 ${capturing ? "animate-spin" : ""}`} /> Retry capture
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="relative rounded-md border bg-sidebar min-h-[420px] flex items-center justify-center p-4 overflow-hidden">
           {live && (
             <span className="absolute top-2.5 left-4 inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-emerald-500">
               <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" /> live
             </span>
           )}
-          {img ? (
-            <img
-              ref={imgRef}
-              src={img}
-              alt="device screen"
-              className="max-w-full max-h-[calc(100vh-260px)] rounded-lg cursor-crosshair touch-none select-none"
-              onPointerDown={(e) => { downPt.current = toDev(e); e.preventDefault(); }}
-              onPointerUp={tapOrSwipe}
-            />
-          ) : (
-            <div className="text-center py-16 text-muted-foreground/50 font-mono text-xs leading-6">
-              <MonitorPhone /> No capture yet.<br />
-              the agent needs an active MediaProjection session —<br />launch the app once on the device, then capture.
+          {capturing && !img && (
+            <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> capturing…
             </div>
           )}
+          <AnimatePresence mode="wait">
+            {img ? (
+              <motion.img
+                key={img.slice(-32)}
+                ref={imgRef}
+                src={img}
+                alt="device screen"
+                initial={{ opacity: 0, scale: 0.995 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="max-w-full max-h-[calc(100vh-260px)] rounded cursor-crosshair touch-none select-none"
+                onPointerDown={(e) => { downPt.current = toDev(e); e.preventDefault(); }}
+                onPointerUp={tapOrSwipe}
+              />
+            ) : !capturing && (
+              <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center py-16 text-muted-foreground/50 font-mono text-xs leading-6">
+                <MonitorPhone /> No capture yet.<br />
+                the agent needs an active MediaProjection session —<br />launch the app once on the device, then capture.
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -168,7 +205,7 @@ export default function ScreenView() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Button variant="outline" size="sm" onClick={() => simple("wake", { secs: 60 }, "screen woken")}><MoonStar className="size-3.5 mr-1" />Wake</Button>
-              <Button variant="outline" size="sm" onClick={() => simple("sleep", {}, "screen locked")}>☾ Sleep</Button>
+              <Button variant="outline" size="sm" onClick={() => simple("sleep", {}, "screen locked")}><Moon className="size-3.5 mr-1" />Sleep</Button>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Button variant="outline" size="sm" onClick={() => simple("vol", { level: "up" }, "vol +")}><Volume2 className="size-3.5 mr-1" />Up</Button>

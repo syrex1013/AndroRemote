@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { toast } from "sonner";
 import { MoreHorizontal, Pencil, Trash2, Crosshair, Radio, Hourglass, ShieldCheck, Server, Globe, Boxes } from "lucide-react";
 import { api, sessionAction, type SessionInfo } from "@/lib/api";
@@ -29,7 +30,7 @@ function StatCard({ icon: Icon, label, value, sub }: { icon: React.ElementType; 
   return (
     <Card>
       <CardContent className="flex items-center gap-3 px-4 py-3.5">
-        <div className="rounded-md bg-primary/10 p-2 text-primary"><Icon className="size-4" /></div>
+        <div className="rounded-md bg-accent p-2 text-foreground"><Icon className="size-4" /></div>
         <div className="min-w-0">
           <div className="text-lg font-semibold font-mono leading-tight">{value}</div>
           <div className="text-[11px] text-muted-foreground font-mono uppercase tracking-wider">{sub ?? label}</div>
@@ -51,7 +52,8 @@ function statusBadge(s: SessionInfo) {
 }
 
 export default function Overview() {
-  const { snapshot, refreshState, events, liveUptime, tick } = useConsole();
+  const { snapshot, stateError, refreshState, events, liveUptime, tick } = useConsole();
+  const reduceMotion = useReducedMotion();
   const [renameFor, setRenameFor] = useState<SessionInfo | null>(null);
   const [renameVal, setRenameVal] = useState("");
   const [forgetFor, setForgetFor] = useState<SessionInfo | null>(null);
@@ -85,7 +87,17 @@ export default function Overview() {
     { state: "offline", count: offline },
   ]), [offline, online, sessions]);
 
-  if (!snapshot) return <Empty text="loading state…" />;
+  if (!snapshot) {
+    return stateError ? (
+      <div className="rounded-lg border border-dashed border-border/70 max-w-xl mx-auto py-12 px-6 text-center">
+        <Boxes className="size-7 mx-auto mb-3 opacity-40" />
+        <p className="text-sm text-red-500/90 break-words">{stateError}</p>
+        <Button size="sm" variant="outline" className="mt-4" onClick={() => refreshState()}>Retry</Button>
+      </div>
+    ) : (
+      <Empty text="loading state…" />
+    );
+  }
   const { server } = snapshot;
 
   const doRename = async () => {
@@ -113,14 +125,25 @@ export default function Overview() {
 
   return (
     <div className="space-y-4 max-w-[1400px]">
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <StatCard icon={Radio} label="clients" value={sessions.length} sub={`${online} online · ${offline} off`} />
-        <StatCard icon={Crosshair} label="active" value={active ? sessions.find((s) => s.cid === active)?.tag ?? "?" : "—"} sub="active session" />
-        <StatCard icon={Server} label="beacons" value={totalBeacons.toLocaleString()} sub="commands run" />
-        <StatCard icon={Hourglass} label="pending" value={pending} sub="queued commands" />
-        <StatCard icon={ShieldCheck} label="crypto" value={server.enc ? "AES-256" : "plain"} sub={server.enc ? `key ${server.key_fp}…` : "encryption off"} />
-        <StatCard icon={Globe} label="uptime" value={<span key={tick}>{fmtUptime(liveUptime())}</span>} sub={`tunnel: ${server.tunnel_mode}`} />
-      </div>
+      <motion.div
+        className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3"
+        variants={{ show: { transition: { staggerChildren: 0.05, delayChildren: 0.05 } } }}
+        initial={reduceMotion ? false : "hidden"}
+        animate="show"
+      >
+        {[
+          <StatCard key="clients" icon={Radio} label="clients" value={sessions.length} sub={`${online} online · ${offline} off`} />,
+          <StatCard key="active" icon={Crosshair} label="active" value={active ? sessions.find((s) => s.cid === active)?.tag ?? "?" : "—"} sub="active session" />,
+          <StatCard key="beacons" icon={Server} label="beacons" value={totalBeacons.toLocaleString()} sub="commands run" />,
+          <StatCard key="pending" icon={Hourglass} label="pending" value={pending} sub="queued commands" />,
+          <StatCard key="crypto" icon={ShieldCheck} label="crypto" value={server.enc ? "AES-256" : "plain"} sub={server.enc ? `key ${server.key_fp}…` : "encryption off"} />,
+          <StatCard key="uptime" icon={Globe} label="uptime" value={<span key={tick}>{fmtUptime(liveUptime())}</span>} sub={`tunnel: ${server.tunnel_mode}`} />,
+        ].map((card) => (
+          <motion.div key={card.key} variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0, transition: { duration: 0.2, ease: "easeOut" } } }}>
+            {card}
+          </motion.div>
+        ))}
+      </motion.div>
 
       <div className="grid lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
@@ -132,7 +155,7 @@ export default function Overview() {
                 <XAxis dataKey="time" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} interval={2} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
                 <Tooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                <Line type="monotone" dataKey="events" name="events" stroke="#22c7d8" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="events" name="events" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -146,7 +169,7 @@ export default function Overview() {
                 <XAxis type="number" allowDecimals={false} hide />
                 <YAxis type="category" dataKey="state" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={54} />
                 <Tooltip cursor={{ fill: "var(--muted)" }} contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                <Bar dataKey="count" name="clients" fill="#8b7cf6" radius={[0, 4, 4, 0]} barSize={18} />
+                <Bar dataKey="count" name="clients" fill="var(--chart-1)" radius={[0, 4, 4, 0]} barSize={18} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -178,15 +201,15 @@ export default function Overview() {
                 </TableHeader>
                 <TableBody>
                   {sessions.map((s) => (
-                    <TableRow key={s.cid} className={s.cid === active ? "bg-primary/[0.04]" : ""}>
+                    <TableRow key={s.cid} className={s.cid === active ? "bg-accent/50" : ""}>
                       <TableCell>{s.cid === active && <Badge className="font-mono text-[10px]">active</Badge>}</TableCell>
-                      <TableCell className="font-mono text-primary">{s.tag}</TableCell>
+                      <TableCell className="font-mono text-foreground font-medium">{s.tag}</TableCell>
                       <TableCell className="text-sm">{s.model}</TableCell>
                       <TableCell className="text-center">{statusBadge(s)}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{s.seq}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{s.pending || <span className="text-muted-foreground/50">—</span>}</TableCell>
                       <TableCell className="text-center">
-                        {s.enc ? <ShieldCheck className="size-3.5 inline text-emerald-500" /> : <span className="text-[10px] font-mono text-muted-foreground/50">plain</span>}
+                        {s.enc ? <ShieldCheck className="size-3.5 inline text-foreground/70" /> : <span className="text-[10px] font-mono text-muted-foreground/50">plain</span>}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">{fmtAge(s.last_seen_age)} ago</TableCell>
                       <TableCell>
@@ -296,10 +319,10 @@ const cnSym = (sym: string) =>
 
 function Empty({ text, hint }: { text: string; hint?: string }) {
   return (
-    <div className="text-center py-14 text-muted-foreground">
-      <Boxes className="size-8 mx-auto mb-3 opacity-40" />
+    <div className="rounded-lg border border-dashed border-border/70 py-12 text-center text-muted-foreground">
+      <Boxes className="size-7 mx-auto mb-3 opacity-40" />
       <p className="text-sm">{text}</p>
-      {hint && <p className="text-xs font-mono mt-1 opacity-70">{hint}</p>}
+      {hint && <p className="text-xs font-mono mt-1.5 opacity-70">{hint}</p>}
     </div>
   );
 }

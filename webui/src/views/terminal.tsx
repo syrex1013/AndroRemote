@@ -16,8 +16,8 @@ function lineCls(l: TermLine) {
   switch (l.kind) {
     case "cmd": return "text-foreground";
     case "sys": return "text-muted-foreground";
-    case "ok": return "text-emerald-500";
-    case "err": return "text-red-400";
+    case "ok": return "text-primary";
+    case "err": return "text-red-500/90";
   }
 }
 
@@ -85,7 +85,7 @@ export default function TerminalView() {
   const s = activeSession();
 
   return (
-    <div className="rounded-lg border bg-[#070b11] text-[#c9d4e2] flex flex-col h-[calc(100vh-150px)] min-h-[420px] max-w-[1400px]">
+    <div className="rounded-lg border bg-sidebar text-foreground flex flex-col h-[calc(100vh-150px)] min-h-[420px] max-w-[1400px]">
       <div ref={feedRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-0.5">
         {termLines.length === 0 && (
           <p className="text-muted-foreground/50">
@@ -109,7 +109,7 @@ export default function TerminalView() {
           </div>
         )}
         <span className="font-mono text-xs text-primary mr-2 whitespace-nowrap">
-          c2{s ? <>:<span className="text-cyan-400">{s.tag}</span></> : null}&gt;
+          c2{s ? <>:<span className="text-primary">{s.tag}</span></> : null}&gt;
         </span>
         <Input
           ref={inputRef}

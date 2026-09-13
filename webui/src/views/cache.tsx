@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable } from "@/components/data-table";
@@ -17,12 +18,17 @@ export default function CacheView() {
   const [items, setItems] = useState<CacheItem[] | null>(null);
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setBusy(true);
+    setError(null);
     try {
       const r = await api<{ items: CacheItem[] }>("/api/cache");
       setItems(r.items);
-    } catch (e) { toast.error(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setBusy(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -40,16 +46,21 @@ export default function CacheView() {
     <div className="max-w-[1000px] space-y-3">
       <div className="flex items-center gap-2">
         <Button size="sm" variant="destructive" onClick={() => setPurgeOpen(true)}><Trash2 className="size-3.5 mr-1" /> Purge all</Button>
-        <Button size="sm" variant="ghost" onClick={load}><RefreshCw className="size-3.5 mr-1" /> Refresh</Button>
+        <Button size="sm" variant="ghost" onClick={load}><RefreshCw className={cn("size-3.5 mr-1", busy && "animate-spin")} /> Refresh</Button>
         <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="filter cache…" className="h-8 w-48 font-mono text-xs" />
         <span className="flex-1" />
         <span className="text-[11px] font-mono text-muted-foreground">TTL cache — agent query results are reused for 60s</span>
       </div>
       <div className="rounded-lg border bg-card overflow-x-auto">
-        {items === null ? (
+        {error ? (
+          <div className="flex flex-col items-center gap-3 py-10 px-6 text-center">
+            <p className="text-sm text-red-500/90 max-w-md break-words">{error}</p>
+            <Button size="sm" variant="outline" onClick={load} disabled={busy}>Retry</Button>
+          </div>
+        ) : items === null ? (
           <p className="text-xs text-muted-foreground font-mono py-8 text-center">loading…</p>
         ) : items.length === 0 ? (
-          <p className="text-xs text-muted-foreground font-mono py-8 text-center">cache is empty — cached agent responses show up here</p>
+          <p className="text-xs text-muted-foreground font-mono py-8 text-center">cache is empty - cached agent responses show up here</p>
         ) : (
           <DataTable
             columns={[

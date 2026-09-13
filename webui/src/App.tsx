@@ -4,7 +4,7 @@ import { ThemeProvider, useTheme } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import {
-  Activity, FolderOpen, Gauge, MonitorSmartphone, Moon, Sun, TerminalSquare, DatabaseZap, SlidersHorizontal, Menu, X,
+  Activity, FolderOpen, Gauge, MonitorSmartphone, Moon, Sun, TerminalSquare, DatabaseZap, SlidersHorizontal, Menu, X, Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConsoleProvider, useConsole } from "@/state";
@@ -19,6 +19,7 @@ import DataView from "@/views/data";
 import FilesView from "@/views/files";
 import TerminalView from "@/views/terminal";
 import CacheView from "@/views/cache";
+import SettingsView from "@/views/settings";
 
 const NAV = [
   { id: "overview", label: "Overview", icon: Gauge },
@@ -28,6 +29,7 @@ const NAV = [
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "terminal", label: "Terminal", icon: TerminalSquare },
   { id: "cache", label: "Cache", icon: Activity },
+  { id: "settings", label: "Settings", icon: Settings },
 ] as const;
 type ViewId = (typeof NAV)[number]["id"];
 
@@ -36,9 +38,9 @@ export function StatusDot({ status }: { status: string }) {
     <span
       className={cn(
         "inline-block size-2 rounded-full shrink-0",
-        status === "online" && "bg-emerald-500 animate-pulse",
-        status === "idle" && "bg-amber-500",
-        status === "offline" && "bg-red-500/70",
+        status === "online" && "bg-emerald-500",
+        status === "idle" && "bg-amber-500/80",
+        status === "offline" && "bg-red-500/60",
       )}
     />
   );
@@ -68,12 +70,12 @@ function TokenGate() {
 }
 
 function Topbar() {
-  const { snapshot, refreshState, sseLive } = useConsole();
+  const { snapshot, stateError, refreshState, sseLive } = useConsole();
   const { resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const online = snapshot?.sessions.filter((s) => s.status === "online").length ?? 0;
+  const online = snapshot?.sessions?.filter((s) => s.status === "online").length ?? 0;
   const srv = snapshot?.server;
 
   const activate = async (cid: string) => {
@@ -84,10 +86,16 @@ function Topbar() {
   return (
     <header className="flex h-14 items-center gap-3 border-b bg-background/80 backdrop-blur px-4 sticky top-0 z-20">
       <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar">
-        {!snapshot?.sessions.length && (
-          <span className="text-xs text-muted-foreground font-mono py-1.5">no sessions — waiting for a beacon…</span>
+        {!snapshot?.sessions?.length && (
+          stateError ? (
+            <button onClick={() => refreshState()} className="text-xs font-mono py-1.5 text-red-500/90 hover:underline cursor-pointer" title={stateError}>
+              API unreachable - retry
+            </button>
+          ) : (
+            <span className="text-xs text-muted-foreground font-mono py-1.5">no sessions - waiting for a beacon…</span>
+          )
         )}
-        {snapshot?.sessions.map((s) => (
+        {snapshot?.sessions?.map((s) => (
           <button
             key={s.cid}
             onClick={() => activate(s.cid)}
@@ -95,8 +103,8 @@ function Topbar() {
             className={cn(
               "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-mono whitespace-nowrap transition-colors cursor-pointer",
               s.cid === snapshot.active
-                ? "border-primary/60 bg-primary/10 text-foreground"
-                : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40",
+                ? "border-foreground/30 bg-foreground/[0.06] text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/25",
             )}
           >
             <StatusDot status={s.status} />
@@ -110,7 +118,7 @@ function Topbar() {
           <span className={cn("size-1.5 rounded-full", sseLive ? "bg-emerald-500" : "bg-red-500 animate-pulse")} />
           {sseLive ? "live" : "reconnecting"}
           {srv && <span className="text-border mx-0.5">|</span>}
-          {srv && <span>{srv.tls ? "TLS" : "HTTP"} · {srv.enc ? "AES-GCM" : "plain"} · {online}/{snapshot!.sessions.length} up</span>}
+          {srv && <span>{srv.tls ? "TLS" : "HTTP"} · {srv.enc ? "AES-GCM" : "plain"} · {online}/{snapshot?.sessions?.length ?? 0} up</span>}
         </span>
         <Button variant="ghost" size="icon" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")} title="Toggle theme">
           {mounted && resolvedTheme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -138,9 +146,9 @@ function Shell() {
         sidebarOpen ? "translate-x-0" : "-translate-x-full",
       )}>
         <div className="flex items-center gap-2.5 px-4 h-14 border-b">
-          <MonitorSmartphone className="size-5 text-primary shrink-0" />
+          <MonitorSmartphone className="size-5 text-foreground shrink-0" />
           <span className="font-mono text-sm tracking-tight">
-            Andro<b className="text-primary font-semibold">Remote</b>
+            Andro<b className="font-semibold">Remote</b>
           </span>
           <Button variant="ghost" size="icon" className="ml-auto md:hidden" onClick={() => setSidebarOpen(false)} aria-label="Close navigation"><X className="size-4" /></Button>
         </div>
@@ -153,8 +161,8 @@ function Shell() {
                 "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-mono transition-colors cursor-pointer",
                 "justify-start",
                 view === n.id
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  ? "bg-accent text-foreground font-medium"
+                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
               )}
             >
               <n.icon className="size-4 shrink-0" />
@@ -173,7 +181,7 @@ function Shell() {
           <div className="mx-auto mb-5 flex max-w-[1400px] items-center gap-3">
             <Button variant="outline" size="icon" className="md:hidden shrink-0" onClick={() => setSidebarOpen(true)} aria-label="Open navigation"><Menu className="size-4" /></Button>
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-primary">Operations / {current.id}</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Operations / {current.id}</p>
               <h1 className="text-xl font-semibold tracking-tight">{current.label}</h1>
             </div>
           </div>
@@ -192,6 +200,7 @@ function Shell() {
               {view === "files" && <FilesView />}
               {view === "terminal" && <TerminalView />}
               {view === "cache" && <CacheView />}
+              {view === "settings" && <SettingsView />}
             </motion.div>
           </AnimatePresence>
         </main>
@@ -203,9 +212,8 @@ function Shell() {
 
 function FooterMeta() {
   const { snapshot } = useConsole();
-  return <>{snapshot?.server.plugins.length ?? 0} plugins · :{snapshot?.server.web_port ?? "—"}</>;
+  return <>{snapshot?.server?.plugins?.length ?? 0} plugins · :{snapshot?.server?.web_port ?? "—"}</>;
 }
-
 export default function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="artheme">

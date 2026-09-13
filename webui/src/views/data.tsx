@@ -224,7 +224,7 @@ export default function DataView() {
       ];
       case "contacts": return [
         { key: "name", head: "Name" },
-        { key: "number", head: "Number", class: "font-mono text-xs text-emerald-500" },
+        { key: "number", head: "Number", class: "font-mono text-xs text-primary" },
       ];
       case "calllog": return [
         { key: "type", head: "Type", value: (r) => r.type, render: (r) => (
@@ -295,7 +295,7 @@ export default function DataView() {
         <p className="text-xs text-muted-foreground font-mono py-8 text-center">click Fetch to load this data</p>
       ) : entry.payload.error ? (
         <div className="text-center py-10 text-muted-foreground">
-          <p className="text-sm text-red-400">{entry.payload.error}</p>
+          <p className="text-sm text-red-500/90">{entry.payload.error}</p>
           <p className="text-xs font-mono mt-1 opacity-70">check that the agent is online, then fetch again</p>
         </div>
       ) : kind === "text" ? (
@@ -367,23 +367,49 @@ export default function DataView() {
 function TextOut({ id, text }: { id: string; text: string }) {
   const isLoc = id === "loc";
   const latLon = isLoc ? text.match(/lat=(-?\d+\.\d+)\D+?lng=(-?\d+\.\d+)/) ?? text.match(/(-?\d+\.\d+)\D+?(-?\d+\.\d+)/) : null;
+  const lat = latLon ? parseFloat(latLon[1]) : 0;
+  const lon = latLon ? parseFloat(latLon[2]) : 0;
+
+  const isErr = text.startsWith("ERR");
+
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
-      <pre className="font-mono text-xs whitespace-pre-wrap">{text}</pre>
-      <div className="flex gap-2">
+      <pre className={`font-mono text-xs whitespace-pre-wrap ${isErr ? "text-destructive" : ""}`}>{text}</pre>
+      {isLoc && isErr && (
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          Grant location permission on the device and enable GPS or network location, then refresh.
+          First attempt shows a permission dialog on the device — approve it and retry.
+        </p>
+      )}
+      <div className="flex gap-2 items-center flex-wrap">
         <Button size="sm" variant="outline" onClick={() => copyText(text, "copied")}>
           <Copy className="size-3.5 mr-1" /> Copy
         </Button>
         {isLoc && latLon && (
           <a
-            href={`https://www.google.com/maps?q=${latLon[1]},${latLon[2]}`}
+            href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`}
             target="_blank" rel="noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border px-3 h-8 text-xs font-mono hover:bg-accent"
+            className="inline-flex items-center gap-1.5 rounded-md border px-3 h-8 text-xs font-mono hover:bg-accent text-primary"
           >
-            <ExternalLink className="size-3.5" /> Open in Maps
+            <ExternalLink className="size-3.5" /> View on OpenStreetMap
           </a>
         )}
       </div>
+      {isLoc && latLon && (
+        <div className="w-full h-64 rounded-md overflow-hidden border mt-2">
+          <iframe
+            title="map"
+            width="100%"
+            height="100%"
+            frameBorder="0"
+            scrolling="no"
+            marginHeight={0}
+            marginWidth={0}
+            src={`https://www.openstreetmap.org/export/embed.html?bbox=${lon - 0.01},${lat - 0.01},${lon + 0.01},${lat + 0.01}&layer=mapnik&marker=${lat},${lon}`}
+            style={{ border: 0 }}
+          />
+        </div>
+      )}
     </div>
   );
 }

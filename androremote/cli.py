@@ -10,7 +10,8 @@ from androremote.plugins.manager import PluginManager
 
 ADB_COMMANDS = {
     "serve", "launch", "consent", "update", "axenable", "axdisable", "tap",
-    "swipe", "settext", "gaction", "installstatus", "wake", "vol", "clipset",
+    "swipe", "settext", "gaction", "installstatus", "wake", "sleep", "unlock",
+    "fastpoll", "vol", "clipset",
     "clipget", "torch", "vibrate", "apps", "startapp", "notifs", "notifsenable",
     "notifsdisable", "ping", "id", "perms", "log", "smslog", "shell", "ls", "contacts", "smsin", "drives",
     "get", "put", "screen", "sms", "calllog", "call", "loc", "photos", "rec"

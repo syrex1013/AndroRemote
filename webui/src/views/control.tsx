@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  Clipboard as ClipIcon, MessageSquareText, Mic, Package, PhoneCall, RefreshCw, Flashlight, Vibrate, Volume2,
+  Clipboard as ClipIcon, MessageSquareText, Mic, Package, PhoneCall, RefreshCw, Flashlight, Vibrate, Volume2, Sun, Moon,
 } from "lucide-react";
 import { postOp } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
@@ -137,8 +137,8 @@ export default function ControlView() {
 
         <CardWrap title="Locks">
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" size="sm" onClick={() => run("wake", { secs: 60 }, "screen woken")}>☀ Wake 60s</Button>
-            <Button variant="outline" size="sm" onClick={() => run("sleep", {}, "screen locked")}>☾ Lock screen</Button>
+            <Button variant="outline" size="sm" onClick={() => run("wake", { secs: 60 }, "screen woken")}><Sun className="size-3.5 mr-1" /> Wake 60s</Button>
+            <Button variant="outline" size="sm" onClick={() => run("sleep", {}, "screen locked")}><Moon className="size-3.5 mr-1" /> Lock screen</Button>
           </div>
           <Separator />
           <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Dismiss PIN keyguard</Label>
@@ -183,7 +183,7 @@ export default function ControlView() {
             <Button variant="outline" size="sm" className="shrink-0"
               onClick={() => run("vol", { level: String(volLevel) }, "volume set")}>Set</Button>
           </div>
-          {volOut && <p className="text-[11px] font-mono text-emerald-500">{volOut}</p>}
+          {volOut && <p className="text-[11px] font-mono text-primary">{volOut}</p>}
         </CardWrap>
 
         <CardWrap title="Clipboard">
@@ -197,7 +197,7 @@ export default function ControlView() {
             onClick={async () => { const r = await run("clipget", {}, "clipboard read"); setClipOut(r?.text || "(empty)"); }}>
             Read device clipboard
           </Button>
-          {clipOut && <p className="text-[11px] font-mono text-emerald-500 break-all">{clipOut}</p>}
+          {clipOut && <p className="text-[11px] font-mono text-primary break-all">{clipOut}</p>}
         </CardWrap>
 
         <CardWrap title="Apps & polling">
@@ -240,7 +240,7 @@ export default function ControlView() {
             onClick={async () => { const r = await run("installstatus", {}, "install status"); setUpdateOut(r?.text || "(no response)"); }}>
             <RefreshCw className="size-3.5 mr-1" /> Check install status
           </Button>
-          {updateOut && <p className="text-[11px] font-mono text-emerald-500">{updateOut}</p>}
+          {updateOut && <p className="text-[11px] font-mono text-primary">{updateOut}</p>}
         </CardWrap>
       </div>
 

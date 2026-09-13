@@ -233,7 +233,14 @@ def parse_photos(raw):
 def parse_ls(raw):
     out = []
     for item in _strip_ok(raw):
-        out.append({"name": item, "dir": item.endswith("/")})
+        if "/\t" in item:
+            n, _sz = item.rsplit("\t", 1)
+            out.append({"name": n[:-1], "dir": True, "size": 0})
+        elif "\t" in item:
+            n, sz = item.rsplit("\t", 1)
+            out.append({"name": n, "dir": False, "size": int(sz) if sz.isdigit() else 0})
+        else:
+            out.append({"name": item[:-1] if item.endswith("/") else item, "dir": item.endswith("/"), "size": 0})
     return out
 
 
@@ -516,6 +523,8 @@ def snapshot():
             "tunnel_url": core.TUNNEL.get("url"),
             "tunnel_mode": core.TUNNEL.get("mode") or "off",
             "tunnel_host": tunnel_cfg.get("hostname") if tunnel_cfg else None,
+            "tunnel_running": bool(core.TUNNEL.get("run")),
+            "tunnel_alive": bool(core.TUNNEL.get("proc") and core.TUNNEL["proc"].poll() is None),
             "plugins": plugins,
             "web_port": WEB_SERVER.server_address[1] if WEB_SERVER else None,
         },
@@ -716,21 +725,13 @@ class WebHandler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             return self._json({"error": "unknown action"}, 400)
 
-        if path == "/api/upload":
+        if path == "/api/delete":
             cid = body.get("cid") or core.ACTIVE["id"]
             rpath = str(body.get("path", ""))
-            data_b64 = str(body.get("data_b64", ""))
-            if not cid or not rpath or not data_b64:
-                return self._json({"error": "cid, path, data_b64 required"}, 400)
-            try:
-                data = base64.b64decode(data_b64)
-            except Exception:
-                return self._json({"error": "invalid base64"}, 400)
-            if len(data) > 32 * 1024 * 1024:
-                return self._json({"error": "file > 32MB"}, 400)
-            payload = "PUTB64 " + core.b64s(rpath) + " " + base64.b64encode(data).decode()
-            ok, res = run_cmd(cid, payload, use_cache=False)
-            return self._json({"ok": bool(ok), "result": res, "bytes": len(data)})
+            if not cid or not rpath:
+                return self._json({"error": "cid and path required"}, 400)
+            ok, res = run_cmd(cid, "RM " + core.b64s(rpath), use_cache=False)
+            return self._json({"ok": bool(ok), "result": res, "deleted": rpath})
 
         if path == "/api/cache/clear":
             cid = body.get("cid") or None
