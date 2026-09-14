@@ -21,13 +21,19 @@ public class KeepAliveJob extends JobService {
 
     @Override
     public boolean onStartJob(JobParameters params) {
-        Intent i = new Intent(this, RemoteService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-            else startService(i);
-        } catch (Exception ignored) {}
-        schedule(this); // re-arm
-        return false; // no background thread needed
+        // both actions are blocking binder calls (startForegroundService scheduling
+        // + JobScheduler.schedule); a saturated system_server can stall them 10s+ —
+        // the 10s onStartJob budget would ANR the process before they finish
+        Thread t = new Thread(() -> {
+            Intent i = new Intent(this, RemoteService.class);
+            try {
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+                else startService(i);
+            } catch (Exception ignored) {}
+            schedule(this); // re-arm
+        }, "ka-start");
+        t.start();
+        return false; // fire-and-forget: never hold the job (would ANR)
     }
 
     @Override
