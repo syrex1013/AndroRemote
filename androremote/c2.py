@@ -249,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404)
         cid = m.group(1)
         model = parse_qs(u.query).get("model", [""])[0]
+        name = parse_qs(u.query).get("name", [""])[0]
         sdk = parse_qs(u.query).get("sdk", [""])[0]
         try:
             batt = int(parse_qs(u.query).get("batt", ["-1"])[0])
@@ -257,13 +258,15 @@ class Handler(BaseHTTPRequestHandler):
         client_ip = self.client_address[0] if self.client_address else "unknown"
         with PENDING_COND:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             fresh = c["seq"] == 0 and c["last_seen"] == 0
             if fresh:
                 c["first_seen"] = time.time()
             c["last_seen"] = time.time()
             c["model"] = model or c["model"]
+            if name:
+                c["name"] = name
             if sdk:
                 c["sdk"] = sdk
             if batt >= 0:
@@ -308,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400)
         with LOCK:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             c["result"] = result
             c["last_seen"] = time.time()
@@ -345,7 +348,7 @@ def b64s(s):
 def queue(cid, cmd):
     with PENDING_COND:
         c = CLIENTS.setdefault(
-            cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+            cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
         )
         c["pending"].append(cmd)
         PENDING_COND.notify_all()  # wake any long-polling fetch for this cid
@@ -614,7 +617,8 @@ def print_sessions():
     t.add_column("", width=1)
     t.add_column("#", width=2, style="dim", justify="right")
     t.add_column("ID / ALIAS", min_width=14, no_wrap=True, style="bold cyan")
-    t.add_column("MODEL", max_width=18, no_wrap=True, style="white")
+    t.add_column("MODEL", max_width=16, no_wrap=True, style="white")
+    t.add_column("NAME", max_width=16, no_wrap=True, style="white")
     t.add_column("SDK", width=4, justify="center", style="dim")
     t.add_column("BATT", width=4, justify="right", style="dim")
     t.add_column("UPTIME", width=8, style="dim")
@@ -627,12 +631,12 @@ def print_sessions():
         mark = "[bold green]●[/bold green]" if cid == ACTIVE["id"] else " "
         st_style, st, age = status_of(c)
         batt = c.get("batt", -1)
-        uptime = fmt_age(time.time() - c["first_seen"]) if c.get("first_seen") else "-"
         t.add_row(
             mark,
             str(i),
             alias_tag(cid),
             (c["model"] or "unknown")[:24],
+            (c.get("name") or "-")[:24],
             c.get("sdk") or "-",
             (f"{batt}%" if batt >= 0 else "-"),
             uptime,
