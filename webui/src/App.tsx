@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { ThemeProvider, useTheme } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import {
   Activity, FolderOpen, Gauge, MonitorSmartphone, Moon, Sun, TerminalSquare, DatabaseZap, SlidersHorizontal, Menu, X, Settings,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConsoleProvider, useConsole } from "@/state";
@@ -19,6 +20,7 @@ import DataView from "@/views/data";
 import FilesView from "@/views/files";
 import TerminalView from "@/views/terminal";
 import CacheView from "@/views/cache";
+import BuildsView from "@/views/builds";
 import SettingsView from "@/views/settings";
 
 const NAV = [
@@ -29,6 +31,7 @@ const NAV = [
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "terminal", label: "Terminal", icon: TerminalSquare },
   { id: "cache", label: "Cache", icon: Activity },
+  { id: "builds", label: "Builds", icon: Package },
   { id: "settings", label: "Settings", icon: Settings },
 ] as const;
 type ViewId = (typeof NAV)[number]["id"];
@@ -185,24 +188,22 @@ function Shell() {
               <h1 className="text-xl font-semibold tracking-tight">{current.label}</h1>
             </div>
           </div>
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={view}
-              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? undefined : { opacity: 0, y: -5 }}
-              transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
-            >
-              {view === "overview" && <Overview />}
-              {view === "screen" && <ScreenView />}
-              {view === "control" && <ControlView />}
-              {view === "data" && <DataView />}
-              {view === "files" && <FilesView />}
-              {view === "terminal" && <TerminalView />}
-              {view === "cache" && <CacheView />}
-              {view === "settings" && <SettingsView />}
-            </motion.div>
-          </AnimatePresence>
+          <motion.div
+            key={view}
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
+          >
+            {view === "overview" && <Overview />}
+            {view === "screen" && <ScreenView />}
+            {view === "control" && <ControlView />}
+            {view === "data" && <DataView />}
+            {view === "files" && <FilesView />}
+            {view === "terminal" && <TerminalView />}
+            {view === "cache" && <CacheView />}
+            {view === "builds" && <BuildsView />}
+            {view === "settings" && <SettingsView />}
+          </motion.div>
         </main>
       </div>
       <TokenGate />

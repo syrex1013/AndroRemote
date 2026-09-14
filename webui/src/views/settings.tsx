@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
 import { Copy, Plug, RefreshCw, Settings } from "lucide-react";
-import { api, type Snapshot } from "@/lib/api";
+import { ApiError, api, setupTunnel, setTunnelMode, type Snapshot, type TunnelLoginRequired } from "@/lib/api";
 import { fmtUptime } from "@/lib/format";
 import { useConsole } from "@/state";
 import { PAGE_OPTIONS, REFRESH_OPTIONS, updatePrefs, usePrefs } from "@/lib/settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 function Group({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -65,6 +66,10 @@ export default function SettingsView() {
   const { resolvedTheme, setTheme } = useTheme();
   const prefs = usePrefs();
   const [cacheCount, setCacheCount] = useState<number | null>(null);
+  const [hostname, setHostname] = useState("");
+  const [tunnelBusy, setTunnelBusy] = useState<"setup" | "mode" | null>(null);
+  const [tunnelError, setTunnelError] = useState<string | null>(null);
+  const [loginRequired, setLoginRequired] = useState<TunnelLoginRequired | null>(null);
 
   useEffect(() => {
     api<{ items: unknown[] }>("/api/cache")
@@ -89,6 +94,51 @@ export default function SettingsView() {
 
   const srv = snapshot.server;
   const tunnel = tunnelState(srv);
+  const tunnelInFlight = tunnelBusy !== null;
+
+  async function handleTunnelSetup() {
+    const name = hostname.trim();
+    if (!name || tunnelBusy) return;
+    setTunnelBusy("setup");
+    setTunnelError(null);
+    setLoginRequired(null);
+    try {
+      const res = await setupTunnel(name);
+      toast.success(res.tunnel_url);
+      setHostname("");
+      await refreshState();
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        typeof err.payload === "object" &&
+        err.payload !== null &&
+        "needs_login" in err.payload &&
+        (err.payload as TunnelLoginRequired).needs_login === true
+      ) {
+        setLoginRequired(err.payload as TunnelLoginRequired);
+      } else {
+        setTunnelError(err instanceof Error ? err.message : "Setup failed");
+      }
+    } finally {
+      setTunnelBusy(null);
+    }
+  }
+
+  async function handleTunnelMode(mode: "off" | "quick" | "named") {
+    if (tunnelBusy) return;
+    setTunnelBusy("mode");
+    setTunnelError(null);
+    setLoginRequired(null);
+    try {
+      await setTunnelMode(mode);
+      await refreshState();
+    } catch (err) {
+      setTunnelError(err instanceof Error ? err.message : "Mode change failed");
+    } finally {
+      setTunnelBusy(null);
+    }
+  }
 
   return (
     <div className="max-w-[820px] space-y-6">
@@ -113,6 +163,45 @@ export default function SettingsView() {
         </Row>
         <Row label="public url">{srv.tunnel_url ? <CopyValue value={srv.tunnel_url} /> : placeholder(null)}</Row>
         <Row label="tunnel hostname">{placeholder(srv.tunnel_host)}</Row>
+        <div className="px-4 py-3">
+          <div className="space-y-1.5">
+            <label htmlFor="tunnel-hostname" className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">Hostname</label>
+            <Input
+              id="tunnel-hostname"
+              value={hostname}
+              onChange={(e) => setHostname(e.target.value)}
+              placeholder="c2.yourdomain.com"
+              className="font-mono text-xs"
+              disabled={tunnelInFlight}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={handleTunnelSetup} disabled={tunnelInFlight || hostname.trim() === ""}>
+              {tunnelBusy === "setup" ? "Creating..." : "Create named tunnel"}
+            </Button>
+            <Select
+              value={srv.tunnel_mode}
+              onValueChange={(v) => { if (v === "off" || v === "quick" || v === "named") handleTunnelMode(v); }}
+              disabled={tunnelInFlight}
+            >
+              <SelectTrigger size="sm" className="w-40 font-mono text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">off</SelectItem>
+                <SelectItem value="quick">quick</SelectItem>
+                <SelectItem value="named">named</SelectItem>
+              </SelectContent>
+            </Select>
+            {tunnelBusy === "mode" && <span className="text-[11px] font-mono text-muted-foreground/70">updating...</span>}
+          </div>
+          {tunnelError && <p className="mt-2 text-xs text-red-500/90 break-words">{tunnelError}</p>}
+          {loginRequired && (
+            <div className="mt-2 space-y-1.5 rounded-md border border-border/60 bg-accent/40 px-3 py-2.5">
+              <p className="text-xs break-words">{loginRequired.detail}</p>
+              <p className="font-mono text-xs"><CopyValue value={loginRequired.command} /></p>
+              <p className="text-xs text-muted-foreground">Authorize the zone in a browser once, then retry.</p>
+            </div>
+          )}
+        </div>
       </Group>
 
       <Group title="Result cache" hint="agent query results reused for 60s">

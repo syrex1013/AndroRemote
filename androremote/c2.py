@@ -114,7 +114,7 @@ ACTIVE = {"id": None}
 STARTED = time.time()
 PSK = None           # 32-byte AES-256 key or None
 TLS = False
-TUNNEL = {"proc": None, "url": None, "mode": None, "run": False}
+TUNNEL = {"proc": None, "url": None, "mode": None, "run": False, "gen": 0}
 ALIASES = {}
 PLUGIN_MANAGER = None
 ARGS = None
@@ -399,11 +399,15 @@ def ensure_named_ingress(cfg, port):
         ev("!", f"could not write {CF_CONFIG}: {e}", "yellow")
 
 
-def _tunnel_supervisor(mode):
-    """Keep cloudflared alive; restarts it (with backoff) if it dies."""
+def _tunnel_supervisor(mode, gen=0):
+    """Keep cloudflared alive; restarts it (with backoff) if it dies.
+
+    Scoped to one generation: a newer start_tunnel_thread() bumps TUNNEL["gen"],
+    which retires this supervisor (and reaps the child it owns), so a mode
+    switch can never leave two cloudflared processes running."""
     backoff = 2
     port = ARGS.port if ARGS else PORT_DEFAULT
-    while TUNNEL["run"]:
+    while TUNNEL["run"] and TUNNEL.get("gen") == gen:
         cmd = None
         if mode == "named":
             cfg = tunnel_named_cfg()
@@ -425,7 +429,7 @@ def _tunnel_supervisor(mode):
             time.sleep(10)
             continue
         t0 = time.time()
-        while TUNNEL["run"] and p.poll() is None:
+        while TUNNEL["run"] and TUNNEL.get("gen") == gen and p.poll() is None:
             line = p.stderr.readline() if p.stderr else ""
             if not line:
                 time.sleep(0.2)
@@ -442,8 +446,13 @@ def _tunnel_supervisor(mode):
                     )
             elif mode == "named" and "Registered tunnel connection" in line and time.time() - t0 < 60:
                 pass
-        if not TUNNEL["run"]:
-            break
+        if TUNNEL.get("gen") != gen or not TUNNEL["run"]:
+            # retired (newer generation) or shutting down: reap our child
+            if p.poll() is None:
+                p.terminate()
+            if TUNNEL.get("proc") is p:
+                TUNNEL["proc"] = None
+            return
         ev("!", "cloudflared exited — restarting in 5s", "yellow")
         time.sleep(backoff)
         backoff = min(backoff * 2, 60)
@@ -452,8 +461,9 @@ def _tunnel_supervisor(mode):
 def start_tunnel_thread(mode):
     TUNNEL["mode"] = mode
     TUNNEL["run"] = mode in ("named", "quick")
+    TUNNEL["gen"] = TUNNEL.get("gen", 0) + 1
     if TUNNEL["run"]:
-        threading.Thread(target=_tunnel_supervisor, args=(mode,), daemon=True).start()
+        threading.Thread(target=_tunnel_supervisor, args=(mode, TUNNEL["gen"]), daemon=True).start()
 
 
 def cmd_setup_tunnel(hostname):

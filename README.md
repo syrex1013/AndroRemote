@@ -99,6 +99,26 @@ androremote axenable
 
 ---
 
+## 🖥️ Web Console
+
+The operator console ships with the C2 server. Start it alongside the listener:
+
+```bash
+python3 androremote.py --web --web-port 8888            # http://127.0.0.1:8888
+python3 androremote.py --web --web-token <token>        # require a bearer token
+```
+
+Views: **Overview** (sessions, live activity, listener state), **Screen** (capture, tap and swipe, navigation keys), **Control** (messaging, mic, locks, hardware, clipboard, apps, agent update), **Data** (SMS, call log, contacts, notifications, apps, photos, permissions, location), **Files** (browse, upload, download, delete), **Terminal** (raw command REPL), **Cache** (result cache with purge), **Builds**, and **Settings**.
+
+Two things the console does that previously needed the CLI:
+
+- **Builds** compiles, signs and packages the agent APK from the browser, shows what the next build will bake (C2 URL, payload crypto, cert pin, signer fingerprint), keeps every past build with the configuration it was baked with, and downloads any of them. Artifacts land in `build/apk/` with a timestamped name; `build/apk/builds.json` holds the metadata (no secrets, only short fingerprints).
+- **Settings** reports the live server state (web port, listener, crypto, key fingerprint, tunnel mode and URL with copy buttons, plugins, cache) and sets up a named Cloudflare tunnel. If `cloudflared` is not logged in yet the console tells you to run `cloudflared tunnel login` once and retry; DNS routing, `tunnel.json` and the ingress config are then written for you.
+
+Theme, snapshot refresh interval and rows per page are per-browser preferences stored in `localStorage`. The console is loopback-only unless you pass `--web-host`, and a bearer token is recommended whenever it is reachable beyond localhost.
+
+---
+
 ## 🧩 Modular Plugin System
 
 AndroRemote includes a dynamic Python plugin system:

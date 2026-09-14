@@ -22,9 +22,13 @@ unless --web-host says otherwise). Optional bearer token via --web-token.
 """
 
 import base64
+import hashlib
 import json
 import os
 import re
+import shutil
+import signal
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,8 +39,114 @@ from androremote import c2 as core
 from androremote.events import BUS
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "dist")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BUILD_DIR = os.path.join(REPO_ROOT, "build", "apk")
+BUILDS_JSON = os.path.join(BUILD_DIR, "builds.json")
 WEB_TOKEN = None
 WEB_SERVER = None
+
+# one build at a time — build.sh rm -rf's build/apk while it works
+BUILD_LOCK = threading.Lock()
+BUILD_LOG = None  # tail lines of the last build, for a UI that missed the response
+TUNNEL_LOCK = threading.Lock()
+
+
+# ───────────────────────────── builds & tunnel ─────────────────────────────
+
+BUILD_URL_RE = re.compile(r"^$|^https?://[A-Za-z0-9._~:/?#\[\]@!$'()*+,;=%-]{3,}$")
+HOSTNAME_RE = re.compile(r"^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+BUILD_FILE_RE = re.compile(r"^[A-Za-z0-9._-]+\.(apk|json)$")
+
+
+def _load_builds():
+    try:
+        with open(BUILDS_JSON) as f:
+            records = json.load(f)
+    except (OSError, ValueError):
+        records = []
+    newest_first = sorted(records, key=lambda r: r.get("built_at", ""), reverse=True)
+    for r in newest_first:
+        r["download_url"] = "/api/builds/" + r["file"]
+    return newest_first
+
+
+def _signer_digest():
+    """Public fingerprint of the signing cert. The keystore password itself
+    is read only here and never logged, stored, or returned."""
+    ks = os.path.join(REPO_ROOT, "keystore", "release.keystore")
+    passfile = os.path.join(REPO_ROOT, "keystore", ".pass")
+    if not os.path.isfile(ks):
+        return None
+    try:
+        pw = open(passfile).read().strip() if os.path.isfile(passfile) else "androremote"
+    except OSError:
+        pw = "androremote"
+    keytool = os.environ.get("JAVA8_KEYTOOL") or "/Library/Java/JavaVirtualMachines/temurin-8.jdk/Contents/Home/bin/keytool"
+    if not os.path.isfile(keytool):
+        keytool = shutil.which("keytool")
+    if not keytool:
+        return None
+    try:
+        out = subprocess.run(
+            [keytool, "-list", "-v", "-keystore", ks, "-storepass", pw],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    for line in out.stdout.splitlines():
+        if "SHA256:" in line:
+            digest = line.split("SHA256:", 1)[1].strip().replace(":", "").lower()
+            if len(digest) >= 40:
+                return digest
+    return None
+
+
+def _build_env():
+    """Preflight for the build action, surfaced in the UI before it runs."""
+    bt = os.path.expanduser("~/Library/Android/sdk/build-tools/35.0.0")
+    keystore = os.path.join(REPO_ROOT, "keystore", "release.keystore")
+    missing = []
+    if shutil.which("cloudflared") is None:
+        missing.append("cloudflared (brew install cloudflared)")
+    if not os.path.isdir(bt):
+        missing.append(f"android build-tools 35.0.0 (missing: {bt})")
+    if not os.path.isfile(keystore):
+        missing.append("signing key (generated on first build)")
+    return {
+        "cloudflared": shutil.which("cloudflared") is not None,
+        "build_tools": os.path.isdir(bt),
+        "keystore": os.path.isfile(keystore),
+        "signer_sha256": _signer_digest(),
+        "missing": missing,
+    }
+
+
+def _next_build_config():
+    """What the next APK would be baked with. Reports booleans and short
+    fingerprints; never the PSK or the pin itself. Falls back to the key file
+    on disk when the importing process has not called core.load_key() yet."""
+    url = core.TUNNEL.get("url")
+    if not url:
+        cfg = core.tunnel_named_cfg()
+        if cfg and cfg.get("hostname"):
+            url = "https://" + cfg["hostname"]
+    psk = core.PSK
+    if psk is None:
+        try:
+            if os.path.isfile(core.KEY_FILE):
+                psk = bytes.fromhex(open(core.KEY_FILE).read().strip())
+        except (OSError, ValueError):
+            psk = None
+    pin = os.path.isfile(os.path.expanduser("~/.androremote/c2cert.pem"))
+    return {
+        "c2_url": url or "",
+        "enc": psk is not None,
+        "psk_fp": hashlib.sha256(psk).hexdigest()[:12] if psk else None,
+        "pin_available": pin,
+        "signer_sha256": _signer_digest(),
+    }
+
+
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -605,17 +715,19 @@ class WebHandler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
 
-        if not self._authorized():
-            return self._deny()
-
+        # The console shell and its assets are public static files: the browser
+        # cannot attach a bearer header to them, and they hold no secrets. Every
+        # /api route stays behind the token.
         if path in ("/", "/index.html"):
             return self._serve_file(os.path.join(WEB_DIR, "index.html"))
-        # static assets from the built SPA (dist/)
-        rel = os.path.normpath(unquote(path.lstrip("/")))
-        if rel and not rel.startswith(".."):
-            fpath = os.path.join(WEB_DIR, rel)
-            if os.path.isfile(fpath):
-                return self._serve_file(fpath)
+        # static assets from the built SPA (dist/), contained to WEB_DIR:
+        # unquote before joining, then verify the resolved path stays inside.
+        fpath = os.path.realpath(os.path.join(WEB_DIR, unquote(path.lstrip("/"))))
+        if fpath.startswith(os.path.realpath(WEB_DIR) + os.sep) and os.path.isfile(fpath):
+            return self._serve_file(fpath)
+
+        if not self._authorized():
+            return self._deny()
 
         if path == "/api/state":
             return self._json(snapshot())
@@ -628,6 +740,35 @@ class WebHandler(BaseHTTPRequestHandler):
 
         if path == "/api/events":
             return self._sse()
+
+        if path == "/api/builds":
+            return self._json({
+                "builds": _load_builds(),
+                "next": _next_build_config(),
+                "env": _build_env(),
+                "building": BUILD_LOCK.locked(),
+            })
+
+        name = os.path.basename(path)
+        if path.startswith("/api/builds/") and BUILD_FILE_RE.match(name):
+            fpath = os.path.realpath(os.path.join(BUILD_DIR, name))
+            if os.path.dirname(fpath) != os.path.realpath(BUILD_DIR):
+                return self._json({"error": "invalid path"}, 400)
+            try:
+                with open(fpath, "rb") as f:
+                    data = f.read()
+            except OSError:
+                return self._json({"error": "not found"}, 404)
+            ctype = "application/vnd.android.package-archive" if name.endswith(".apk") else "application/json"
+            self.send_response(200)
+            self._common_headers()
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition", f"attachment; filename=\"{name}\"")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            core.ev("✓", f"web: build download {name} ({len(data):,} B)", "green")
+            return
 
         if path == "/api/download":
             qs = parse_qs(u.query)
@@ -663,6 +804,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._deny()
 
         body = self._read_body()
+        if not isinstance(body, dict):
+            return self._json({"error": "invalid body - expected a JSON object"}, 400)
 
         if path == "/api/op":
             op = str(body.get("op", ""))
@@ -732,7 +875,6 @@ class WebHandler(BaseHTTPRequestHandler):
                 return self._json({"error": "cid and path required"}, 400)
             ok, res = run_cmd(cid, "RM " + core.b64s(rpath), use_cache=False)
             return self._json({"ok": bool(ok), "result": res, "deleted": rpath})
-
         if path == "/api/cache/clear":
             cid = body.get("cid") or None
             if cid:
@@ -742,6 +884,125 @@ class WebHandler(BaseHTTPRequestHandler):
                     return self._json({"error": "unknown session"}, 404)
             n = core.CACHE.invalidate(cid)
             return self._json({"cleared": n})
+
+        if path == "/api/build":
+            if not BUILD_LOCK.acquire(blocking=False):
+                return self._json({"error": "a build is already running"}, 409)
+            url = str(body.get("url", "") or "").strip()
+            if not BUILD_URL_RE.match(url):
+                BUILD_LOCK.release()
+                return self._json({"error": "invalid build url - use https://host or empty for the active tunnel"}, 400)
+            # empty means "whatever the server is currently exposing": the
+            # supervisor's URL, else the configured named tunnel, else the
+            # adb-direct build (build.sh bakes no C2 URL).
+            if not url:
+                url = _next_build_config()["c2_url"]
+            script = os.path.join(REPO_ROOT, "build.sh")
+            if not os.path.isfile(script):
+                BUILD_LOCK.release()
+                return self._json({"error": "build.sh not found"}, 400)
+            try:
+                res = subprocess.run(
+                    ["/bin/sh", script, url],
+                    cwd=REPO_ROOT,
+                    capture_output=True, text=True, timeout=600,
+                    start_new_session=True,  # own process group so a timeout can kill the whole build
+                )
+            except subprocess.TimeoutExpired as e:
+                if e.pid is not None:
+                    try:
+                        os.killpg(os.getpgid(e.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
+                BUILD_LOG = ["build timed out after 10 minutes and was killed"]
+                BUILD_LOCK.release()
+                return self._json({"error": "build timed out after 600s"}, 504)
+            except Exception as e:
+                BUILD_LOCK.release()
+                return self._json({"error": f"build failed to start: {e}"}, 500)
+            lines = (res.stdout + "\n" + res.stderr).splitlines()
+            BUILD_LOG = lines[-60:]
+            BUILD_LOCK.release()
+            if res.returncode != 0:
+                core.ev("✗", "web build failed", "red")
+                return self._json({"ok": False, "code": res.returncode, "log": BUILD_LOG,
+                                   "c2_url": url, "builds": _load_builds()}, 500)
+            core.ev("*", f"web build finished: {core.escape(url or 'adb-direct')}", "cyan")
+            return self._json({"ok": True, "code": 0, "log": BUILD_LOG, "c2_url": url,
+                               "builds": _load_builds(), "next": _next_build_config()})
+
+        if path == "/api/tunnel/mode":
+            mode = str(body.get("mode", "")).strip()
+            if mode not in ("off", "quick", "named"):
+                return self._json({"error": "mode must be off, quick or named"}, 400)
+            if mode == "named" and not core.tunnel_named_cfg():
+                return self._json({"error": "no named tunnel configured - set one up first"}, 400)
+            with TUNNEL_LOCK:
+                with core.LOCK:
+                    old = core.TUNNEL["run"]
+                    core.TUNNEL["run"] = False
+                if old and core.TUNNEL.get("proc") and core.TUNNEL["proc"].poll() is None:
+                    core.TUNNEL["proc"].terminate()
+                core.start_tunnel_thread(mode)
+            core.ev("*", f"web: tunnel mode -> {mode}", "cyan")
+            return self._json({"ok": True, "mode": mode})
+
+        if path == "/api/tunnel/setup":
+            hostname = str(body.get("hostname", "")).strip().lower()
+            if not HOSTNAME_RE.match(hostname):
+                return self._json({"error": "invalid hostname (want like c2.yourdomain.com)"}, 400)
+            if shutil.which("cloudflared") is None:
+                return self._json({"error": "cloudflared not installed - brew install cloudflared"}, 400)
+            cert = os.path.expanduser("~/.cloudflared/cert.pem")
+            if not os.path.isfile(cert):
+                return self._json({
+                    "error": "cloudflared login required before DNS setup",
+                    "needs_login": True,
+                    "command": "cloudflared tunnel login",
+                    "detail": "authorize your Cloudflare zone in a browser once; the credential lands in ~/.cloudflared/cert.pem",
+                }, 409)
+            with TUNNEL_LOCK:
+                try:
+                    existing = json.loads(subprocess.run(
+                        ["cloudflared", "tunnel", "list", "--output", "json"],
+                        capture_output=True, text=True, timeout=60, check=True,
+                    ).stdout or "[]")
+                except Exception as e:
+                    return self._json({"error": f"could not list tunnels: {e}"}, 500)
+                match = [t for t in existing if t.get("name") == "androremote"]
+                if match:
+                    tid = match[0]["id"]
+                else:
+                    r = subprocess.run(
+                        ["cloudflared", "tunnel", "create", "androremote"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    if r.returncode != 0:
+                        return self._json({"error": (r.stderr or r.stdout or "create failed").strip()}, 500)
+                    try:
+                        existing = json.loads(subprocess.run(
+                            ["cloudflared", "tunnel", "list", "--output", "json"],
+                            capture_output=True, text=True, timeout=60, check=True,
+                        ).stdout or "[]")
+                        tid = [t["id"] for t in existing if t.get("name") == "androremote"][0]
+                    except Exception as e:
+                        return self._json({"error": f"could not resolve tunnel id: {e}"}, 500)
+                r = subprocess.run(
+                    ["cloudflared", "tunnel", "route", "dns", "-f", "androremote", hostname],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if r.returncode != 0:
+                    detail = (r.stderr or r.stdout or "").strip()
+                    return self._json({"error": f"DNS route failed: {detail}"}, 500)
+                creds = os.path.expanduser(f"~/.cloudflared/{tid}.json")
+                if not os.path.isfile(creds):
+                    return self._json({"error": f"credentials file missing: {creds}"}, 500)
+                cfg = {"id": tid, "name": "androremote", "hostname": hostname, "credentials": creds}
+                core.ensure_named_ingress(cfg, core.ARGS.port if core.ARGS else core.PORT_DEFAULT)
+                core.HOME_DIR = getattr(core, "HOME_DIR", None) or core.HOME_DIR
+                json.dump(cfg, open(core.TUNNEL_FILE, "w"), indent=2)
+            core.ev("*", f"web: tunnel configured for {hostname}", "cyan")
+            return self._json({"ok": True, "tunnel_url": f"https://{hostname}"})
 
         return self._json({"error": "not found"}, 404)
 

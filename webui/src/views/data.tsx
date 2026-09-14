@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import {
   Copy, Download, ExternalLink, MessageSquareText, MoreHorizontal, PhoneCall, RefreshCw, Search, Send, SquareArrowOutUpRight,
 } from "lucide-react";
-import { postOp } from "@/lib/api";
+import { downloadFile, postOp } from "@/lib/api";
 import { useConsole } from "@/state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,18 +31,12 @@ async function copyText(t: string, label = "copied") {
 }
 
 async function downloadRemote(cid: string, rpath: string) {
-  toast("downloading " + rpath.split("/").pop() + "…");
+  const name = rpath.split("/").pop() || "file.bin";
+  toast("downloading " + name + "…");
   try {
-    const q = new URLSearchParams({ cid, path: rpath, name: rpath.split("/").pop() || "file.bin" });
-    const res = await fetch("/api/download?" + q);
-    if (!res.ok) throw new Error("download failed");
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = rpath.split("/").pop() || "file.bin";
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast.success("saved " + a.download);
+    const q = new URLSearchParams({ cid, path: rpath, name });
+    await downloadFile("/api/download?" + q, name);
+    toast.success("saved " + name);
   } catch (e) { toast.error(String(e instanceof Error ? e.message : e)); }
 }
 
