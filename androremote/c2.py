@@ -631,6 +631,7 @@ def print_sessions():
         mark = "[bold green]●[/bold green]" if cid == ACTIVE["id"] else " "
         st_style, st, age = status_of(c)
         batt = c.get("batt", -1)
+        uptime = fmt_age(time.time() - c["first_seen"]) if c.get("first_seen") else "-"
         t.add_row(
             mark,
             str(i),
