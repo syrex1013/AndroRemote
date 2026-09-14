@@ -421,14 +421,29 @@ def _num(args, key, default):
 
 
 def op_screen(cid, args):
-    ok, res = run_cmd(cid, "SCREENB64", timeout=45, use_cache=False)
+    # scaled capture (default 720 long edge): ~5x less CPU/GC on the phone
+    # during live streaming and a much smaller payload over the tunnel
+    maxdim = max(0, min(2160, _num(args, "maxdim", 720)))
+    ok, res = run_cmd(cid, f"SCREENB64 {maxdim}", timeout=45, use_cache=False)
     if not ok or not res:
         return {"error": res or "capture failed"}
-    parts = res.split(" ", 2)
-    if parts[0] != "OK" or len(parts) < 3:
+    parts = res.split(" ", 3)
+    if parts[0] != "OK":
         return {"error": res}
-    mime = "image/jpeg" if parts[2].startswith("/9j/") else "image/png"
-    return {"png": parts[2], "bytes": int(parts[1]) if parts[1].isdigit() else 0, "mime": mime}
+    if len(parts) == 4 and "x" in parts[2]:
+        # new agent: "OK <len> <WxH> <b64>" — real device bounds for tap mapping
+        w, h = (int(v) for v in parts[2].split("x"))
+        b64data, dims = parts[3], {"w": w, "h": h}
+    elif len(parts) == 3:
+        # pre-scaling agent: image itself is the device resolution
+        b64data, dims = parts[2], None
+    else:
+        return {"error": res}
+    out = {"png": b64data, "bytes": int(parts[1]) if parts[1].isdigit() else 0,
+           "mime": "image/jpeg" if b64data.startswith("/9j/") else "image/png"}
+    if dims:
+        out.update(dims)
+    return out
 
 
 def op_rec(cid, args):

@@ -5,4 +5,5 @@
     android:accessibilityFlags="flagDefault|flagReportViewIds"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
     android:description="@string/ax_desc"/>

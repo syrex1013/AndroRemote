@@ -133,13 +133,63 @@ public class RemoteAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * Consent-free screenshot fallback (no MediaProjection approval): fires the
-     * system TAKE_SCREENSHOT global action (API 28+), waits for the new image
-     * row in MediaStore, reads it via ContentResolver and returns JPEG bytes.
-     * Visible flash + a system toast; the file is kept (deleting other apps'
-     * media needs user confirmation) — call this only when projection is down.
+     * Consent-free screenshot via AccessibilityService.takeScreenshot()
+     * (API 30+): silent, no MediaProjection prompt, no visible flash, nothing
+     * written to MediaStore. Runs on the caller's worker; the service's own
+     * executor delivers the result. API 28-29 falls back to the global-action
+     * + MediaStore scan (visible flash, file kept).
+     * Returns JPEG bytes or null.
      */
-    byte[] screenshotFallback() {
+    byte[] screenshotFallback(int maxDim) {
+        // AccessibilityService.takeScreenshot is API 33+; below that the
+        // global-action + MediaStore scan (API 28+) is the consent-free path
+        if (android.os.Build.VERSION.SDK_INT >= 33) return takeScreenshotAx(maxDim);
+        return screenshotViaMediaStore();
+    }
+
+    private byte[] takeScreenshotAx(int maxDim) {
+        try {
+            final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+            final java.util.concurrent.atomic.AtomicReference<byte[]> out =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            takeScreenshot(android.view.Display.DEFAULT_DISPLAY, getMainExecutor(),
+                    new AccessibilityService.TakeScreenshotCallback() {
+                        @Override
+                        public void onSuccess(AccessibilityService.ScreenshotResult s) {
+                            try {
+                                android.graphics.Bitmap bmp = android.graphics.Bitmap.wrapHardwareBuffer(
+                                        s.getHardwareBuffer(), s.getColorSpace());
+                                if (bmp == null) return;
+                                // hardware bitmaps can't be encoded/scaled
+                                // directly: copy to software first
+                                android.graphics.Bitmap soft = bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, false);
+                                bmp.recycle();
+                                out.set(CaptureService.jpeg(soft, maxDim));
+                            } finally {
+                                s.getHardwareBuffer().close();
+                                done.countDown();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(int errorCode) {
+                            done.countDown();
+                        }
+                    });
+            // system delivers the callback or never (service not ready);
+            // bounded wait keeps the agent responsive either way
+            done.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return out.get();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** API 28-29 only: fire the system TAKE_SCREENSHOT global action, wait for
+     * the new image row in MediaStore, read it via ContentResolver and return
+     * JPEG bytes. Visible flash + a system toast; the file is kept (deleting
+     * other apps' media needs user confirmation). */
+    private byte[] screenshotViaMediaStore() {
         if (android.os.Build.VERSION.SDK_INT < 28) return null;
         long before = System.currentTimeMillis() - 1000;
         try {

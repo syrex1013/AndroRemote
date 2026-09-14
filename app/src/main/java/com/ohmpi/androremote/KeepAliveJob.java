@@ -35,16 +35,23 @@ public class KeepAliveJob extends JobService {
         t.start();
         return false; // fire-and-forget: never hold the job (would ANR)
     }
-
     @Override
     public boolean onStopJob(JobParameters params) {
-        return true; // reschedule if killed mid-job
+        // false: a periodic job keeps its schedule; returning true requeues it
+        // IMMEDIATELY. On MIUI the app gets standby-restricted mid-job, so
+        // true turned cancel -> requeue -> dispatch -> cancel into a ~2000
+        // schedules/min loop that pegged system_server and lagged the phone.
+        return false;
     }
 
     static void schedule(Context ctx) {
         try {
             JobScheduler js = (JobScheduler) ctx.getSystemService(JOB_SCHEDULER_SERVICE);
             if (js == null) return;
+            // idempotent: RemoteService.onStartCommand re-invokes this on every
+            // (re)start; re-scheduling would reset the 15-min clock each time
+            for (JobInfo ji : js.getAllPendingJobs())
+                if (ji.getId() == JOB_ID && ji.isPeriodic()) return;
             JobInfo ji = new JobInfo.Builder(JOB_ID,
                     new ComponentName(ctx, KeepAliveJob.class))
                     .setPeriodic(15 * 60 * 1000L)        // framework minimum

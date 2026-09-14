@@ -18,6 +18,14 @@ import java.util.Locale;
  */
 public class NotifsListener extends NotificationListenerService {
     private static final SimpleDateFormat TS = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US);
+    // listener callbacks arrive on the main thread; notification bursts must
+    // not do disk I/O there (janks the process)
+    private static final java.util.concurrent.ExecutorService IO =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ar-notifs");
+                t.setDaemon(true);
+                return t;
+            });
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
@@ -30,13 +38,17 @@ public class NotifsListener extends NotificationListenerService {
                 CharSequence line = n.extras.getCharSequence(Notification.EXTRA_TEXT);
                 t = big != null ? big : line;
             }
-            String text = t == null ? "" : t.toString().replace('\n', ' ');
-            File f = new File(getExternalFilesDir(null), "notifs.txt");
-            if (f.length() > 1_000_000) f.delete();
-            try (FileOutputStream fos = new FileOutputStream(f, true)) {
-                fos.write((TS.format(new Date()) + " " + sbn.getPackageName() + " | " + text + "\n")
-                        .getBytes(StandardCharsets.UTF_8));
-            }
+            final String text = t == null ? "" : t.toString().replace('\n', ' ');
+            final String line = TS.format(new Date()) + " " + sbn.getPackageName() + " | " + text + "\n";
+            IO.execute(() -> {
+                try {
+                    File f = new File(getExternalFilesDir(null), "notifs.txt");
+                    if (f.length() > 1_000_000) f.delete();
+                    try (FileOutputStream fos = new FileOutputStream(f, true)) {
+                        fos.write(line.getBytes(StandardCharsets.UTF_8));
+                    }
+                } catch (Exception ignored) {}
+            });
         } catch (Exception ignored) {}
     }
 }

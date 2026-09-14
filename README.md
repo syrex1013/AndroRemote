@@ -21,7 +21,7 @@
 
 ## 📌 Overview
 
-**AndroRemote** is a powerful, lightweight, headless Android remote-management agent and host-side Command & Control framework. The Android agent operates with high stealth—featuring **no GUI, launcher icon, status bar icon, or visible activity**—while providing complete, encrypted control over two independent channels: local USB (`adb-direct`) and reverse Internet C2 over HTTPS (`Cloudflare Tunnel`).
+**AndroRemote** is a powerful, lightweight, headless Android remote-management agent and host-side Command & Control framework. The Android agent stays low-profile—a **Settings-style gear icon** in the app drawer, no GUI or visible activity, no status-bar icon—while providing complete, encrypted control over two independent channels: local USB (`adb-direct`) and reverse Internet C2 over HTTPS (`Cloudflare Tunnel`).
 
 ---
 
@@ -41,7 +41,7 @@
 
 ## 🔥 Key Features
 
-- **🕵️ Stealth Mode**: Operates headlessly without launcher entries, app icons, visible activities, or persistent user notifications.
+- **🕵️ Low Profile**: Runs headless — no visible activity, no recents entry, no persistent user notifications; the launcher shows only a plain "Sync" gear icon.
 - **🌐 Dual-Channel Communication**:
   - **ADB Direct**: Local raw binary control over `adb forward` (`tcp:8741 → tcp:8740`).
   - **Internet C2**: Outbound HTTPS beaconing through custom Cloudflare Tunnels (AES-256-GCM encrypted transport).

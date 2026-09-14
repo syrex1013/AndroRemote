@@ -38,15 +38,19 @@
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
         android:allowBackup="false">
-        <!-- No MAIN/LAUNCHER intent-filter: app is hidden from the launcher.
-             Explicit start only: adb shell am start -n com.ohmpi.androremote/.MainActivity
-             (needed once for the screen-capture consent). -->
+        <!-- Launcher entry (gear icon, label "Sync"): tapping runs MainActivity,
+             which requests perms, starts the agent, and finishes immediately. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true"
-            android:noHistory="true"/>
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".ConsentActivity"
