@@ -24,7 +24,7 @@ import java.nio.ByteBuffer;
 
 /**
  * Holds the MediaProjection granted once from MainActivity and serves
- * on-demand full-screen PNG captures to RemoteService (SCREEN / SCREENB64).
+ * on-demand full-screen JPEG captures to RemoteService (SCREEN / SCREENB64).
  */
 public class CaptureService extends Service {
     static final String CHANNEL = "androremote-cap";
@@ -125,7 +125,9 @@ public class CaptureService extends Service {
                 full.copyPixelsFromBuffer(buf);
                 Bitmap crop = pad == 0 ? full : Bitmap.createBitmap(full, 0, 0, w, h);
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                crop.compress(Bitmap.CompressFormat.PNG, 100, bos);
+                // JPEG: ~10x faster encode than PNG at this resolution and a
+                // much smaller upload; screenshots are opaque so lossy is fine
+                crop.compress(Bitmap.CompressFormat.JPEG, 85, bos);
                 return bos.toByteArray();
             } catch (Exception e) {
                 Log.e("AndroRemote", "capture failed", e);

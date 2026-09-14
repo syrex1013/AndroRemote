@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ChevronLeft, Circle, Home, Loader2, Lock, Power, RefreshCw, MoonStar, Square, Play, TriangleAlert, Volume2, VolumeX, Bell, Moon,
+  ChevronLeft, Circle, Home, Loader2, Lock, Power, RefreshCw, MoonStar, Square, Play, TriangleAlert, Volume2, VolumeX, Bell, Moon, BatteryCharging,
 } from "lucide-react";
 import { postOp } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
@@ -47,10 +47,10 @@ export default function ScreenView() {
     setErr(null);
     setStatus("capturing…");
     try {
-      const r = await postOp<{ png?: string; bytes?: number; error?: string }>("screen");
+      const r = await postOp<{ png?: string; bytes?: number; mime?: string; error?: string }>("screen");
       if (r.error) { setErr(r.error); setStatus("capture failed"); }
       else {
-        setImg("data:image/png;base64," + r.png);
+        setImg(`data:${r.mime ?? "image/png"};base64,` + r.png);
         setErr(null);
         setStatus(`${fmtBytes(r.bytes!)} · ${new Date().toTimeString().slice(0, 8)}`);
       }
@@ -203,8 +203,9 @@ export default function ScreenView() {
               <Button variant="outline" size="sm" onClick={() => gaction("lock")}><Lock className="size-3.5 mr-1" />Lock</Button>
               <Button variant="outline" size="sm" onClick={() => gaction("notifications")}><Bell className="size-3.5 mr-1" />Notif</Button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Button variant="outline" size="sm" onClick={() => simple("wake", { secs: 60 }, "screen woken")}><MoonStar className="size-3.5 mr-1" />Wake</Button>
+              <Button variant="outline" size="sm" onClick={() => simple("keepawake", { secs: 1800 }, "cpu awake, screen off")}><BatteryCharging className="size-3.5 mr-1" />Awake</Button>
               <Button variant="outline" size="sm" onClick={() => simple("sleep", {}, "screen locked")}><Moon className="size-3.5 mr-1" />Sleep</Button>
             </div>
             <div className="grid grid-cols-2 gap-2">

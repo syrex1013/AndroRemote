@@ -305,7 +305,7 @@ public class RemoteService extends Service {
                         return null;
                     }
                     OutputStream os = sock.getOutputStream();
-                    os.write(("OK " + png.length + " screen.png\n").getBytes(StandardCharsets.UTF_8));
+                    os.write(("OK " + png.length + " screen.jpg\n").getBytes(StandardCharsets.UTF_8));
                     os.write(png);
                     os.flush();
                     return null;
@@ -681,6 +681,89 @@ public class RemoteService extends Service {
                         return "OK wake (screen on " + secs + "s)";
                     } catch (Exception e) {
                         return "ERR wake: " + e;
+                    }
+                }
+                case "keepawake": {
+                    // KEEPAWAKE [secs] [plain]: keep the device awake with the
+                    // screen effectively off but UNLOCKED (default, dark):
+                    // SCREEN_BRIGHT wake lock + brightness forced to 0 — the
+                    // display stays powered black, so it never sleeps and the
+                    // keyguard never engages (wake = instantly open). Original
+                    // brightness (+auto mode) is restored on expiry. Without
+                    // WRITE_SETTINGS, or with the token "plain", falls back to
+                    // a PARTIAL lock (screen off per timeout; keyguard per
+                    // device policy).
+                    int secs = 300;
+                    try { secs = Math.max(1, Math.min(3600, Integer.parseInt(arg.isEmpty() ? "300" : arg.trim().split(" ")[0]))); }
+                    catch (NumberFormatException ignored) {}
+                    boolean dark = !arg.contains(" plain");
+                    try {
+                        android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                        if (!dark) {
+                            android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                                    android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                                    "androremote:keepawake");
+                            wl.acquire(secs * 1000L);
+                            return "OK keepawake " + secs + "s (cpu on, screen off, no lock)";
+                        }
+                        android.app.KeyguardManager km = (android.app.KeyguardManager) getSystemService(android.content.Context.KEYGUARD_SERVICE);
+                        if (km != null && km.isKeyguardLocked())
+                            return "ERR keepawake: keyguard engaged — unlock the device once, then retry";
+                        android.content.ContentResolver cr = getContentResolver();
+                        final int origB = android.provider.Settings.System.getInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS, 80);
+                        final int origMode = android.provider.Settings.System.getInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE, 1);
+                        android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                        final int secsF = secs;
+                        final android.view.View[] overlay = {null};
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                            try {
+                                // AMOLED kiosk: full-screen pass-through black
+                                // window = true black even at the OEM brightness
+                                // floor; pass-through keeps touches flowing
+                                android.view.WindowManager wm =
+                                        (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+                                android.view.View black = new android.view.View(this);
+                                black.setBackgroundColor(0xFF000000);
+                                android.view.WindowManager.LayoutParams lp =
+                                        new android.view.WindowManager.LayoutParams(
+                                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                                                android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                                        | android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                                        | android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                                                android.graphics.PixelFormat.OPAQUE);
+                                wm.addView(black, lp);
+                                overlay[0] = black;
+                            } catch (Exception ignored) {} // no overlay permission: brightness alone
+                        });
+                        android.os.PowerManager.WakeLock wl = pm.newWakeLock(
+                                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                                        | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                                "androremote:keepawake-dark");
+                        wl.acquire(secsF * 1000L);
+                        Thread restore = new Thread(() -> {
+                            try { Thread.sleep(secsF * 1000L + 500); } catch (InterruptedException ignored) {}
+                            new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                                if (overlay[0] != null) try { ((android.view.WindowManager) getSystemService(WINDOW_SERVICE)).removeView(overlay[0]); } catch (Exception ignored) {}
+                            });
+                            try {
+                                android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS_MODE, origMode);
+                                android.provider.Settings.System.putInt(cr, android.provider.Settings.System.SCREEN_BRIGHTNESS, origB);
+                            } catch (Exception ignored) {}
+                        }, "keepawake-restore");
+                        restore.setDaemon(true);
+                        restore.start();
+                        return "OK keepawake " + secs + "s dark (screen black, unlocked)";
+                    } catch (SecurityException se) {
+                        android.os.PowerManager pm2 = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                        android.os.PowerManager.WakeLock wl = pm2.newWakeLock(
+                                android.os.PowerManager.PARTIAL_WAKE_LOCK,
+                                "androremote:keepawake");
+                        wl.acquire(secs * 1000L);
+                        return "OK keepawake " + secs + "s (no WRITE_SETTINGS: cpu on, screen off per timeout, no lock)";
+                    } catch (Exception e) {
+                        return "ERR keepawake: " + e;
                     }
                 }
                 case "sleep": {

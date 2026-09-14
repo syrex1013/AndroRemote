@@ -418,7 +418,8 @@ def op_screen(cid, args):
     parts = res.split(" ", 2)
     if parts[0] != "OK" or len(parts) < 3:
         return {"error": res}
-    return {"png": parts[2], "bytes": int(parts[1]) if parts[1].isdigit() else 0}
+    mime = "image/jpeg" if parts[2].startswith("/9j/") else "image/png"
+    return {"png": parts[2], "bytes": int(parts[1]) if parts[1].isdigit() else 0, "mime": mime}
 
 
 def op_rec(cid, args):
@@ -515,8 +516,8 @@ def handle_op(op, cid, args, force_refresh):
         "tap": f"TAP {_num(args, 'x', 0)} {_num(args, 'y', 0)}",
         "swipe": f"SWIPE {_num(args, 'x1', 0)} {_num(args, 'y1', 0)} {_num(args, 'x2', 0)} {_num(args, 'y2', 0)} {_num(args, 'ms', 300)}",
         "settext": "SETTEXT " + str(args.get("text", "")),
-        "gaction": "GACTION " + str(args.get("action", "")),
         "wake": "WAKE " + str(args.get("secs", "")),
+        "keepawake": "KEEPAWAKE " + str(args.get("secs", "")),
         "sleep": "SLEEP",
         "unlock": "UNLOCK " + str(args.get("pin", "")),
         "vol": "VOL " + str(args.get("level", "")),
@@ -1035,7 +1036,7 @@ class WebHandler(BaseHTTPRequestHandler):
 def start_web(host="127.0.0.1", port=8888, token=None):
     global WEB_SERVER, WEB_TOKEN
     WEB_TOKEN = token
-    WEB_SERVER = ThreadingHTTPServer((host, port), WebHandler)
+    WEB_SERVER = core.QuietHTTPServer((host, port), WebHandler)
     WEB_SERVER.daemon_threads = True
     threading.Thread(target=WEB_SERVER.serve_forever, daemon=True, name="webui").start()
     url = f"http{'s' if core.TLS else ''}://{host}:{port}"
