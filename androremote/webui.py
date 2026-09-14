@@ -47,7 +47,6 @@ WEB_SERVER = None
 
 # one build at a time — build.sh rm -rf's build/apk while it works
 BUILD_LOCK = threading.Lock()
-BUILD_LOG = None  # tail lines of the last build, for a UI that missed the response
 TUNNEL_LOCK = threading.Lock()
 
 
@@ -914,21 +913,19 @@ class WebHandler(BaseHTTPRequestHandler):
                         os.killpg(os.getpgid(e.pid), signal.SIGKILL)
                     except (ProcessLookupError, PermissionError, OSError):
                         pass
-                BUILD_LOG = ["build timed out after 10 minutes and was killed"]
                 BUILD_LOCK.release()
-                return self._json({"error": "build timed out after 600s"}, 504)
+                return self._json({"error": "build timed out after 600s and was killed"}, 504)
             except Exception as e:
                 BUILD_LOCK.release()
                 return self._json({"error": f"build failed to start: {e}"}, 500)
-            lines = (res.stdout + "\n" + res.stderr).splitlines()
-            BUILD_LOG = lines[-60:]
+            log = (res.stdout + "\n" + res.stderr).splitlines()[-60:]
             BUILD_LOCK.release()
             if res.returncode != 0:
                 core.ev("✗", "web build failed", "red")
-                return self._json({"ok": False, "code": res.returncode, "log": BUILD_LOG,
+                return self._json({"ok": False, "code": res.returncode, "log": log,
                                    "c2_url": url, "builds": _load_builds()}, 500)
             core.ev("*", f"web build finished: {core.escape(url or 'adb-direct')}", "cyan")
-            return self._json({"ok": True, "code": 0, "log": BUILD_LOG, "c2_url": url,
+            return self._json({"ok": True, "code": 0, "log": log, "c2_url": url,
                                "builds": _load_builds(), "next": _next_build_config()})
 
         if path == "/api/tunnel/mode":
