@@ -44,6 +44,7 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
 
 export interface SessionInfo {
   cid: string; tag: string; model: string;
+  name: string; sdk: string; batt: number; ip: string; first_seen: number;
   status: "online" | "idle" | "offline";
   last_seen: number; last_seen_age: number;
   pending: number; enc: boolean; seq: number;

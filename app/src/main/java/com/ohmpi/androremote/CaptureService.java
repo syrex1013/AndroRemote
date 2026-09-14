@@ -31,13 +31,14 @@ public class CaptureService extends Service {
     private static volatile MediaProjection projection;
     private static volatile VirtualDisplay display;
     private static volatile ImageReader reader;
+    private static volatile CaptureService instance;
 
     @Override
     public void onCreate() {
         super.onCreate();
+        instance = this;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         NotificationChannel channel = new NotificationChannel(CHANNEL, "Sync", NotificationManager.IMPORTANCE_MIN);
-        channel.setShowBadge(false);
         nm.createNotificationChannel(channel);
     }
 
@@ -63,7 +64,6 @@ public class CaptureService extends Service {
                     projection.registerCallback(new MediaProjection.Callback() {
                         @Override public void onStop() { release(); }
                     }, null);
-                    setup();
                 } catch (Exception e) { Log.e("AndroRemote", "capture service setup failed", e); }
             }
         }
@@ -79,9 +79,14 @@ public class CaptureService extends Service {
         super.onDestroy();
     }
 
-    private void setup() {
-        Rect b = ((WindowManager) getSystemService(WINDOW_SERVICE)).getMaximumWindowMetrics().getBounds();
-        int dpi = getResources().getDisplayMetrics().densityDpi;
+    /** Create the mirror display + reader. The persistent AUTO_MIRROR
+    VirtualDisplay is what lags the whole phone: SurfaceFlinger composites
+    every frame into it at display rate forever. So it only exists while a
+    capture is actually in flight. */
+    private static void openDisplay(CaptureService svc) {
+        if (display != null || reader != null) return;
+        Rect b = ((WindowManager) svc.getSystemService(WINDOW_SERVICE)).getMaximumWindowMetrics().getBounds();
+        int dpi = svc.getResources().getDisplayMetrics().densityDpi;
         reader = ImageReader.newInstance(b.width(), b.height(), PixelFormat.RGBA_8888, 2);
         display = projection.createVirtualDisplay("androremote",
                 b.width(), b.height(), dpi,
@@ -89,28 +94,32 @@ public class CaptureService extends Service {
                 reader.getSurface(), null, null);
     }
 
-    static void release() {
+    private static void closeDisplay() {
         try { if (display != null) display.release(); } catch (Exception ignored) {}
         try { if (reader != null) reader.close(); } catch (Exception ignored) {}
         display = null;
         reader = null;
+    }
+
+    static void release() {
+        closeDisplay();
         try { if (projection != null) projection.stop(); } catch (Exception ignored) {}
         projection = null;
     }
 
-    /** Capture one full-screen PNG, or null if projection is not active. */
-    static boolean isActive() { return projection != null && reader != null; }
+    /** True when a MediaProjection grant is held (captures are possible). */
+    static boolean isActive() { return projection != null; }
 
     static byte[] capture() {
         MediaProjection p = projection;
-        ImageReader r = reader;
-        if (p == null || r == null) return null;
+        if (p == null) return null;
         synchronized (CaptureService.class) {
             Image img = null;
             try {
+                openDisplay(CaptureService.instance);
                 long deadline = System.currentTimeMillis() + 3000;
                 while (img == null && System.currentTimeMillis() < deadline) {
-                    img = r.acquireLatestImage();
+                    img = reader.acquireLatestImage();
                     if (img == null) Thread.sleep(50);
                 }
                 if (img == null) return null;
@@ -129,11 +138,12 @@ public class CaptureService extends Service {
                 // much smaller upload; screenshots are opaque so lossy is fine
                 crop.compress(Bitmap.CompressFormat.JPEG, 85, bos);
                 return bos.toByteArray();
-            } catch (Exception e) {
-                Log.e("AndroRemote", "capture failed", e);
+            } catch (Throwable t) {
+                Log.e("AndroRemote", "capture failed", t);
                 return null;
             } finally {
                 if (img != null) img.close();
+                closeDisplay();
             }
         }
     }

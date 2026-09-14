@@ -191,6 +191,10 @@ export default function Overview() {
                     <TableHead className="w-10"></TableHead>
                     <TableHead>Session</TableHead>
                     <TableHead>Device</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead className="text-center">SDK</TableHead>
+                    <TableHead className="text-center">Batt</TableHead>
+                    <TableHead>IP</TableHead>
                     <TableHead className="text-center">State</TableHead>
                     <TableHead className="text-right">Beacons</TableHead>
                     <TableHead className="text-right">Queue</TableHead>
@@ -205,6 +209,16 @@ export default function Overview() {
                       <TableCell>{s.cid === active && <Badge className="font-mono text-[10px]">active</Badge>}</TableCell>
                       <TableCell className="font-mono text-foreground font-medium">{s.tag}</TableCell>
                       <TableCell className="text-sm">{s.model}</TableCell>
+                      <TableCell className="text-sm">{s.name || <span className="text-muted-foreground/50">—</span>}</TableCell>
+                      <TableCell className="text-center font-mono text-xs text-muted-foreground">{s.sdk || "—"}</TableCell>
+                      <TableCell className="text-center font-mono text-xs">
+                        {s.batt >= 0 ? (
+                          <span className={s.batt <= 15 ? "text-red-500" : s.batt <= 30 ? "text-amber-500" : "text-foreground"}>
+                            {s.batt}%
+                          </span>
+                        ) : <span className="text-muted-foreground/50">—</span>}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{s.ip || "—"}</TableCell>
                       <TableCell className="text-center">{statusBadge(s)}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{s.seq}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{s.pending || <span className="text-muted-foreground/50">—</span>}</TableCell>

@@ -32,9 +32,10 @@ Two channels, both always active when configured:
 | Call audio | `RECORD <secs>` | mic WAV; see "Call recording" below |
 | Photos | `PHOTOS [n]` | MediaStore list with full paths, fetch via `GET`/`GETB64` |
 | Location | `LOC` | last-known, else 15s one-shot fix |
+| Location track | `LOCTRACK <secs> [interval]` | fixes from all enabled providers over a window (1–600s); web UI shows a table, GPX export and an OSM track map |
 | Device info | `ID` `PERMS` `INFO` | model, SDK, perms, battery, RAM, storage, uptime, local IPs |
 | Contacts | `CONTACTS [n]` | name + number from the phone book |
-| Inbox SMS | `SMSIN [n]` | recent inbox messages from the SMS provider |
+| Inbox SMS | `SMSIN [n]` | recent inbox messages from the SMS provider — full message bodies (view/copy in the web UI) |
 | Remote control | `TAP` `SWIPE` `SETTEXT` `GACTION` | needs accessibility service (see below) |
 | Self-update | `INSTALL <apk>` + `INSTALLSTATUS` | PackageInstaller + accessibility auto-confirm (see below) |
 | Wake / sleep | `WAKE [secs]` / `SLEEP` | bright wake lock (default 10s, max 300s); sleep = keyguard lock via accessibility |
@@ -45,6 +46,8 @@ Two channels, both always active when configured:
 | Vibrate | `VIBRATE [ms]` | |
 | Apps | `APPS` / `STARTAPP <pkg>` | list all (needs `QUERY_ALL_PACKAGES`); launch best-effort |
 | Notifications | `NOTIFS [n]` | via `NotifsListener` (enable once, see below) |
+| Permissions on demand | `PERMREQ <perm>[,...]` | pops the runtime-permission dialogs on the device (web UI: grant buttons in each feature tab) |
+| Special-access screens | `UIREQ accessibility\|notiflistener\|install\|consent\|battery` | opens the matching system settings / consent screen on the device |
 
 ## Repo layout
 
@@ -154,9 +157,8 @@ python3 androremote.py ping                      # expect: PONG
 - Autostart is quadruple-redundant: `BootReceiver` (`BOOT_COMPLETED` **and** `MY_PACKAGE_REPLACED` — restart after every self-update), the accessibility service's `onServiceConnected` re-start, and `WatchdogReceiver` — a 15-minute wake-up alarm, `KeepAliveJob` — a persisted periodic JobScheduler job that restarts `RemoteService` if the process died (START_STICKY can be a no-op on aggressive OEMs).
 - **Force-stopped apps (`stopped=true`) never receive BOOT_COMPLETED** until launched once. Don't `am force-stop` the app if you rely on boot autostart.
 
-### Screenshots (MediaProjection)
+- First launch of the app shows the system screen-capture consent once. `CaptureService` (FGS type `mediaProjection`) holds the projection; the mirror `VirtualDisplay` + `ImageReader` exist **only during a capture** (a persistent mirror forces SurfaceFlinger to composite every frame at display rate, which lags the whole phone) and serve on-demand JPEG captures — no adb, works over the C2 tunnel.
 
-- First launch of the app shows the system screen-capture consent once. `CaptureService` (FGS type `mediaProjection`) then holds the projection and serves on-demand PNG captures — no adb, works over the C2 tunnel.
 - The consent token is valid for the process lifetime. **After reboot or app-process death, screenshots need one app re-launch** to re-consent; every other feature keeps working headless.
 - If projection is inactive, the CLI falls back to `adb exec-out screencap`.
 
@@ -292,6 +294,7 @@ SCREENB64 | GETB64 <b64path> | PUTB64 <b64path> <b64data>   # base64 variants
 TAP x y | SWIPE x1 y1 x2 y2 [ms] | SETTEXT text | GACTION name  # accessibility
 INSTALL <path> | INSTALLSTATUS                                 # self-update
 WAKE | VOL | CLIPSET | CLIPGET | TORCH | VIBRATE | APPS | STARTAPP | NOTIFS | FASTPOLL
+LOCTRACK <secs> [interval] | PERMREQ <perm>[,...] | UIREQ accessibility|notiflistener|install|consent|battery
 ```
 
 C2 (HTTP beacons):

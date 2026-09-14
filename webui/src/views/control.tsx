@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { PermButton } from "@/components/perm-button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -99,6 +100,7 @@ export default function ControlView() {
             onClick={() => run("sms", { number: smsNum, text: smsText }, "SMS sent")}>
             <MessageSquareText className="size-3.5 mr-1" /> Send SMS
           </Button>
+          <PermButton perms={["android.permission.SEND_SMS", "android.permission.RECEIVE_SMS", "android.permission.READ_SMS", "android.permission.CALL_PHONE"]} label="Grant SMS / call" />
           <Separator />
           <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Voice call</Label>
           <div className="flex gap-2">
@@ -133,6 +135,7 @@ export default function ControlView() {
               <p className="text-[10px] font-mono text-muted-foreground">{fmtBytes(recOut.bytes)} · {recOut.path}</p>
             </div>
           )}
+          <PermButton perms={["android.permission.RECORD_AUDIO"]} label="Grant microphone" />
         </CardWrap>
 
         <CardWrap title="Locks">
@@ -161,18 +164,18 @@ export default function ControlView() {
               }} />
             </label>
             <Button variant="outline" size="sm" onClick={() => run("vibrate", { ms: 500 }, "vibrated")}><Vibrate className="size-3.5 mr-1" /> Vibrate 500ms</Button>
+          <PermButton perms={["android.permission.CAMERA"]} label="Grant camera" />
           </div>
           <Separator />
           <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Volume</Label>
           <div className="grid grid-cols-4 gap-2">
             <Button variant="outline" size="sm" onClick={() => run("vol", { level: "up" }, "vol +")}><Volume2 className="size-3.5 mr-1" />+</Button>
             <Button variant="outline" size="sm" onClick={() => run("vol", { level: "down" }, "vol −")}>−</Button>
-            <Button variant="outline" size="sm" onClick={() => run("vol", { level: "mute" }, "muted")}>Mute</Button>
             <Button variant="outline" size="sm" onClick={async () => {
               const r = await run("vol", {}, "volume read");
               if (r?.text) {
                 setVolOut(r.text);
-                const m = r.text.match(/volume=(\d+)/);
+                const m = r.text.match(/vol (\d+)\/(\d+)/); // agent prints "vol 7/15"
                 if (m) setVolLevel(Number(m[1]));
               }
             }}>Read</Button>

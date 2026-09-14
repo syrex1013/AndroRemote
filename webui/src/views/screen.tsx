@@ -7,11 +7,11 @@ import {
 import { postOp } from "@/lib/api";
 import { fmtBytes } from "@/lib/format";
 import { useConsole } from "@/state";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PermButton } from "@/components/perm-button";
 import { Switch } from "@/components/ui/switch";
 
 const NO_SESSION = (
@@ -22,7 +22,7 @@ const NO_SESSION = (
 );
 
 export default function ScreenView() {
-  const { snapshot, activeSession } = useConsole();
+  const { snapshot } = useConsole();
   const hasActive = !!snapshot?.active;
 
   const [img, setImg] = useState<string | null>(null);
@@ -110,8 +110,6 @@ export default function ScreenView() {
   };
 
   if (!hasActive) return NO_SESSION;
-  const s = activeSession()!;
-
   return (
     <div className="grid xl:grid-cols-[minmax(0,1fr)_300px] gap-4 max-w-[1400px]">
       <div className="space-y-3">
@@ -176,6 +174,12 @@ export default function ScreenView() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
                 className="max-w-full max-h-[calc(100vh-260px)] rounded cursor-crosshair touch-none select-none"
+                onLoad={(e) => {
+                  // the capture IS the device resolution — tap mapping needs it
+                  const el = e.currentTarget;
+                  setDims((d) => (el.naturalWidth && el.naturalHeight && (d.w !== el.naturalWidth || d.h !== el.naturalHeight)
+                    ? { w: el.naturalWidth, h: el.naturalHeight } : d));
+                }}
                 onPointerDown={(e) => { downPt.current = toDev(e); e.preventDefault(); }}
                 onPointerUp={tapOrSwipe}
               />
@@ -188,8 +192,17 @@ export default function ScreenView() {
           </AnimatePresence>
         </div>
       </div>
-
       <div className="space-y-3">
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">Access</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Capture needs the screen-capture grant; tapping/swiping needs the accessibility service.
+            </p>
+            <PermButton what="consent" label="Grant screen capture" />
+            <PermButton what="accessibility" label="Open accessibility settings" />
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">Navigation</CardTitle></CardHeader>
           <CardContent className="space-y-2">
@@ -235,9 +248,9 @@ export default function ScreenView() {
               <Input type="number" value={dims.h} onChange={(e) => setDims((d) => ({ ...d, h: Number(e.target.value) || 2400 }))} className="h-8 font-mono text-xs" />
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Click the screen to tap · drag to swipe. Set the device's real resolution for accurate mapping.
+              Click the screen to tap · drag to swipe. Resolution is auto-read
+              from each capture; override here only if mapping looks off.
             </p>
-            <Badge variant="secondary" className="font-mono text-[10px]">{s.model}</Badge>
           </CardContent>
         </Card>
       </div>
