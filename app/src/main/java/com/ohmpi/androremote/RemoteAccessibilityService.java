@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 
 /**
@@ -129,6 +130,67 @@ public class RemoteAccessibilityService extends AccessibilityService {
         Bundle args = new Bundle();
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text);
         return focus.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args);
+    }
+
+    /**
+     * Consent-free screenshot fallback (no MediaProjection approval): fires the
+     * system TAKE_SCREENSHOT global action (API 28+), waits for the new image
+     * row in MediaStore, reads it via ContentResolver and returns JPEG bytes.
+     * Visible flash + a system toast; the file is kept (deleting other apps'
+     * media needs user confirmation) — call this only when projection is down.
+     */
+    byte[] screenshotFallback() {
+        if (android.os.Build.VERSION.SDK_INT < 28) return null;
+        long before = System.currentTimeMillis() - 1000;
+        try {
+            if (!performGlobalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)) return null;
+            String[] proj = {android.provider.MediaStore.Images.Media._ID};
+            // MIUI SystemUI writes screenshot rows with DATE_TAKEN sometimes
+            // null — accept either date column (DATE_ADDED is epoch seconds)
+            String sel = "(" + android.provider.MediaStore.Images.Media.DATE_TAKEN + ">? OR "
+                    + android.provider.MediaStore.Images.Media.DATE_ADDED + ">?)";
+            long beforeSec = before / 1000;
+            for (int i = 0; i < 40; i++) {
+                Thread.sleep(200);
+                android.database.Cursor c = null;
+                try {
+                    c = getContentResolver().query(
+                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj,
+                            sel,
+                            new String[]{String.valueOf(before), String.valueOf(beforeSec)},
+                            android.provider.MediaStore.Images.Media.DATE_TAKEN + " DESC");
+                    if (c != null && c.moveToFirst()) {
+                        byte[] raw = null;
+                        try (java.io.InputStream is = getContentResolver().openInputStream(
+                                android.content.ContentUris.withAppendedId(
+                                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(0)))) {
+                            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                            byte[] buf = new byte[8192];
+                            int n;
+                            while ((n = is.read(buf)) > 0) bos.write(buf, 0, n);
+                            raw = bos.toByteArray();
+                        }
+                        if (raw != null && raw.length > 0) return toJpeg(raw);
+                    }
+                } finally {
+                    if (c != null) c.close();
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private byte[] toJpeg(byte[] png) {
+        try {
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(png, 0, png.length);
+            if (bmp == null) return png;
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, bos);
+            bmp.recycle();
+            return bos.toByteArray();
+        } catch (Exception e) {
+            return png;
+        }
     }
 
     /**
