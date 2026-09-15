@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="AndroRemote — Android device operations from a terminal or web console" width="100%" />
+  <img src="docs/images/banner.svg" alt="AndroRemote - Android device operations from a terminal or web console" width="100%" />
 </p>
 
 <h1 align="center">AndroRemote</h1>
@@ -25,7 +25,7 @@
 
 > AndroRemote is for devices you own or are explicitly authorized to administer. It can access sensitive device data and perform privileged operations; use it only in a controlled, consent-based environment.
 
-## Why AndroRemote
+## 🧭 Why AndroRemote
 
 Android operations are often split between `adb`, one-off scripts, and a dashboard that cannot explain what happened. AndroRemote provides one operator surface for device identity, screenshots, input, files, diagnostics, permissions, and selected communications features.
 
@@ -36,7 +36,7 @@ It is deliberately local-first:
 - **CLI and web console** share the same command and session model.
 - **The APK has no app UI**; setup and consent happen through Android system surfaces and the operator tools.
 
-## Interface preview
+## 📸 Interface preview
 
 The repository includes project-native console visuals built from the real CLI and Web UI structure, populated with clearly labeled synthetic demo data.
 
@@ -52,18 +52,18 @@ The repository includes project-native console visuals built from the real CLI a
 
 <p align="center"><em>Rich terminal workflow for session selection, commands, results, and plugin output.</em></p>
 
-## What you get
+## 🧰 What you get
 
 | Surface | Purpose |
 | --- | --- |
-| `androremote` CLI | Unified entry point for the C2 console, plugins, and ADB shortcuts. |
-| `c2.py` / C2 listener | Queues commands, receives agent beacons, records results, and manages sessions. |
-| Android agent APK | Headless `RemoteService` with TCP direct mode and optional outbound beacon mode. |
-| React/Vite web console | Live SSE state, screen actions, targeted data, files, builds, cache, and settings. |
-| Plugin engine | Auto-discovers built-ins and user plugins from `~/.androremote/plugins`. |
-| `build.sh` | Resource compile, Java compile, DEX, alignment, signing, and build metadata. |
+| ⌨️ `androremote` CLI | Unified entry point for the C2 console, plugins, and ADB shortcuts. |
+| 🛰️ `c2.py` / C2 listener | Queues commands, receives agent beacons, records results, and manages sessions. |
+| 📱 Android agent APK | Headless `RemoteService` with TCP direct mode and optional outbound beacon mode. |
+| 🖥️ React/Vite web console | Live SSE state, screen actions, targeted data, files, builds, cache, and settings. |
+| 🧩 Plugin engine | Auto-discovers built-ins and user plugins from `~/.androremote/plugins`. |
+| 🔧 `build.sh` | Resource compile, Java compile, DEX, alignment, signing, and build metadata. |
 
-### Core operations
+### ⚙️ Core operations
 
 - Device identity, permissions, battery, storage, uptime, RAM, and network information
 - Screenshots through Android accessibility capture, MediaProjection fallback, or ADB fallback
@@ -73,7 +73,7 @@ The repository includes project-native console visuals built from the real CLI a
 - App listing and launch, clipboard, volume, torch, vibration, and agent update operations
 - Result caching for safe read-heavy operations and live event streaming over SSE
 
-## Architecture
+## 🗺️ Architecture
 
 ```text
                          optional outbound HTTPS
@@ -94,9 +94,9 @@ The repository includes project-native console visuals built from the real CLI a
 
 The C2 transport uses AES-256-GCM payload encryption by default. The web UI binds to `127.0.0.1` by default and supports an optional bearer token when deliberately exposed on another interface.
 
-## Quick start
+## 🚀 Quick start
 
-### Requirements
+### 🧱 Requirements
 
 For the Python tools:
 
@@ -114,7 +114,7 @@ For Internet C2 only:
 
 - `cloudflared`, installed with `brew install cloudflared`
 
-### Install
+### 📦 Install
 
 ```sh
 python3 -m venv .venv
@@ -124,7 +124,7 @@ python -m pip install -e .
 
 This registers `androremote` and `c2` in the active environment.
 
-### USB / ADB direct mode
+### 🔌 USB / ADB direct mode
 
 Build the agent without a C2 endpoint, install it on an authorized test device, and create the local bridge:
 
@@ -141,7 +141,7 @@ androremote screen /tmp/device.png
 
 Use `androremote --help` for the complete command matrix. Common commands include `perms`, `drives`, `ls`, `get`, `put`, `tap`, `swipe`, `settext`, `gaction`, `apps`, `loc`, and `update`.
 
-### C2 mode
+### 🌐 C2 mode
 
 Start the listener and optional web console:
 
@@ -165,7 +165,7 @@ python3 c2.py --setup-tunnel c2.yourdomain.com
 
 Quick-tunnel URLs rotate when the server restarts. Rebuild and reinstall when the baked endpoint changes.
 
-## Web console
+## 🖥️ Web console
 
 Open `http://127.0.0.1:8888` after starting with `--web`.
 
@@ -182,13 +182,13 @@ Open `http://127.0.0.1:8888` after starting with `--web`.
 
 The UI requests sensitive data only from the relevant operation. Preferences such as theme, refresh interval, and page size are stored in browser `localStorage`.
 
-## Plugins
+## 🧩 Plugins
 
 Built-ins are loaded from `androremote/plugins/builtin/`:
 
-- `triage` — device information, permissions, network, location, and recent notifications in one report
-- `file_hunter` — targeted searches for document, key, database, archive, and image files
-- `monitor` — beacon intervals, session telemetry, and recent result events
+- `triage` - device information, permissions, network, location, and recent notifications in one report
+- `file_hunter` - targeted searches for document, key, database, archive, and image files
+- `monitor` - beacon intervals, session telemetry, and recent result events
 
 ```sh
 androremote plugins list
@@ -197,13 +197,13 @@ androremote plugins info triage
 
 The C2 REPL also supports `/plugins`, `/plugin load <path>`, and plugin commands such as `/triage` and `/monitor`.
 
-## Build and signing notes
+## 🔐 Build and signing notes
 
 `build.sh` performs the Android build without Gradle: `aapt2` resource compilation/linking, JDK 8 compilation, `d8`, APK alignment, and `apksigner` signing. On the first build it creates a local signing key under `keystore/`; the key and password are ignored by Git.
 
 Keep the same signing key for future updates. Android rejects an update signed with a different key. The C2 URL, optional PSK, and certificate pin are written into the generated build resources, so treat APK artifacts as environment-specific.
 
-## Documentation
+## 📚 Documentation
 
 [`GUIDE.md`](GUIDE.md) contains the full capability matrix, protocol details, provisioning notes, tunnel behavior, permissions, operator REPL reference, update flow, and plugin documentation.
 
@@ -217,7 +217,7 @@ build.sh                             Standalone APK build and signing pipeline
 docs/images/                         Interface evidence used above
 ```
 
-## Security and responsible use
+## 🛡️ Security and responsible use
 
 - Operate only devices you own or have explicit authorization to manage.
 - Keep the C2 listener and web UI behind access controls. The web UI is loopback-only by default; use `--web-token` when changing that boundary.
@@ -226,6 +226,6 @@ docs/images/                         Interface evidence used above
 - Do not use the tool to access another person’s messages, calls, files, location, microphone, camera, or accounts without documented consent.
 - Test on disposable devices first. Some operations are OEM- and Android-version-dependent; see the limitations in [`GUIDE.md`](GUIDE.md).
 
-## License
+## 📄 License
 
 No `LICENSE` file is currently present in this checkout. Add a license before treating the public repository as distributable software.
