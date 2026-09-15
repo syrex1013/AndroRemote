@@ -41,13 +41,13 @@ It is deliberately local-first:
 The repository includes project-native console visuals built from the real CLI and Web UI structure, populated with clearly labeled synthetic demo data.
 
 <p align="center">
-  <img src="docs/images/webui_interface.svg" alt="AndroRemote web console showing synthetic device sessions, live state, and operation controls" width="96%" />
+  <img src="docs/images/webui_interface.png" alt="AndroRemote web console showing synthetic device sessions, live state, and operation controls" width="96%" />
 </p>
 
 <p align="center"><em>Responsive operator console: overview, screen control, data, files, terminal, builds, cache, and settings.</em></p>
 
 <p align="center">
-  <img src="docs/images/cli_interface.svg" alt="AndroRemote terminal console showing a synthetic session and command output" width="96%" />
+  <img src="docs/images/cli_interface.png" alt="AndroRemote terminal console showing a synthetic session and command output" width="96%" />
 </p>
 
 <p align="center"><em>Rich terminal workflow for session selection, commands, results, and plugin output.</em></p>

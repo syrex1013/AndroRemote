@@ -149,7 +149,7 @@ function Shell() {
         sidebarOpen ? "translate-x-0" : "-translate-x-full",
       )}>
         <div className="flex items-center gap-2.5 px-4 h-14 border-b">
-          <MonitorSmartphone className="size-5 text-foreground shrink-0" />
+          <MonitorSmartphone className="size-5 text-primary shrink-0" />
           <span className="font-mono text-sm tracking-tight">
             Andro<b className="font-semibold">Remote</b>
           </span>
@@ -161,10 +161,10 @@ function Shell() {
               key={n.id}
               onClick={() => { setView(n.id); setSidebarOpen(false); }}
               className={cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-mono transition-colors cursor-pointer",
+                "flex items-center gap-3 rounded-none border-l-4 border-transparent px-3 py-2 text-sm font-mono transition-colors cursor-pointer",
                 "justify-start",
                 view === n.id
-                  ? "bg-accent text-foreground font-medium"
+                  ? "border-primary bg-primary/5 text-foreground font-medium"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
               )}
             >
@@ -217,7 +217,7 @@ function FooterMeta() {
 }
 export default function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} storageKey="artheme">
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} storageKey="artheme">
       <ConsoleProvider>
         <Shell />
         <Toaster position="bottom-right" richColors closeButton />
