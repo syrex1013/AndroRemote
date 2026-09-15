@@ -73,6 +73,24 @@ The repository includes project-native console visuals built from the real CLI a
 - App listing and launch, clipboard, volume, torch, vibration, and agent update operations
 - Result caching for safe read-heavy operations and live event streaming over SSE
 
+### 📱 Android compatibility
+
+The APK is built with a minimum SDK of API 26 and is intended for Android 8.0
+(Oreo) through Android 16 (API 36). The core agent, ADB bridge, C2 transport,
+and operator console work across that range; screenshots, storage, media, and
+background-execution behavior vary by Android release and OEM. Newer releases
+may require additional system consent, notification, accessibility, or media
+permissions for individual features.
+
+### 🕶️ Low-visibility operation
+
+The agent is headless and designed for unobtrusive, consent-based device
+administration: it has no normal in-app UI, finishes its launcher activity,
+stays out of Recents, and uses low-importance foreground-service notifications.
+It is not invisible: Android requires foreground-service disclosure, and the
+package remains visible in system settings. Use these characteristics only on
+devices you own or are explicitly authorized to manage.
+
 ## 🗺️ Architecture
 
 ```text
@@ -228,4 +246,4 @@ docs/images/                         Interface evidence used above
 
 ## 📄 License
 
-No `LICENSE` file is currently present in this checkout. Add a license before treating the public repository as distributable software.
+Distributed under the [MIT License](LICENSE).
