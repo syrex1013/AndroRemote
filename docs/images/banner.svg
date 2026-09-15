@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">AndroRemote</title>
+  <desc id="desc">A red and white operator console identity for authorized Android device operations.</desc>
+  <rect width="1200" height="360" fill="#fbfaf8"/>
+  <path d="M62 74V42h32 M1106 42h32v32 M62 286v32h32 M1106 318h32v-32" fill="none" stroke="#ef3219" stroke-width="7"/>
+  <path d="M62 102H1138 M62 258H1138" stroke="#d9d6d2" stroke-width="2"/>
+  <path d="M80 180H1120" stroke="#ef3219" stroke-width="2"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#111111">
+    <text x="600" y="138" text-anchor="middle" font-size="68" font-weight="900" letter-spacing="-2">ANDRO<tspan fill="#ef3219">REMOTE</tspan></text>
+    <text x="600" y="218" text-anchor="middle" font-size="27" font-weight="700" letter-spacing="3">ANDROID OPERATIONS / C2 / ADB</text>
+    <text x="600" y="252" text-anchor="middle" font-size="18" font-weight="700" letter-spacing="1" fill="#66615d">LOCAL-FIRST CONTROL FOR AUTHORIZED DEVICES</text>
+  </g>
+  <g font-family="Menlo, Consolas, monospace" font-size="16" font-weight="700" fill="#ef3219">
+    <text x="86" y="68">01 / OPERATOR TOOLKIT</text>
+    <text x="1114" y="68" text-anchor="end">STATUS: READY</text>
+    <text x="86" y="300">USB 8741</text>
+    <text x="1114" y="300" text-anchor="end">C2 8742 · WEB 8888</text>
+  </g>
+</svg>

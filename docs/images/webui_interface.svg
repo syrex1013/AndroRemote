@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">AndroRemote web console demo</title>
+  <desc id="desc">A synthetic AndroRemote dashboard showing two demo Android sessions, health metrics, and recent operator events.</desc>
+  <rect width="1200" height="680" fill="#fbfaf8"/>
+  <rect x="28" y="28" width="1144" height="624" fill="#ffffff" stroke="#151515" stroke-width="2"/>
+  <rect x="28" y="28" width="232" height="624" fill="#151515"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="55" y="72" font-size="25" font-weight="900" fill="#ffffff">ANDRO<tspan fill="#ef3219">REMOTE</tspan></text>
+    <text x="55" y="98" font-family="Menlo, monospace" font-size="12" fill="#a6a6a6">OPERATOR CONSOLE / DEMO</text>
+    <g font-size="16" font-weight="700">
+      <text x="58" y="158" fill="#ef3219">01</text><text x="92" y="158" fill="#ffffff">Overview</text>
+      <text x="58" y="204" fill="#a6a6a6">02</text><text x="92" y="204" fill="#ffffff">Screen</text>
+      <text x="58" y="250" fill="#a6a6a6">03</text><text x="92" y="250" fill="#ffffff">Control</text>
+      <text x="58" y="296" fill="#a6a6a6">04</text><text x="92" y="296" fill="#ffffff">Data</text>
+      <text x="58" y="342" fill="#a6a6a6">05</text><text x="92" y="342" fill="#ffffff">Files</text>
+      <text x="58" y="388" fill="#a6a6a6">06</text><text x="92" y="388" fill="#ffffff">Terminal</text>
+    </g>
+    <path d="M55 438H232" stroke="#4d4d4d"/>
+    <text x="55" y="476" font-family="Menlo, monospace" font-size="12" fill="#a6a6a6">TUNNEL</text><text x="55" y="500" font-size="14" font-weight="700" fill="#ffffff">OFF / LOCAL MODE</text>
+    <text x="55" y="548" font-family="Menlo, monospace" font-size="12" fill="#a6a6a6">LAST SNAPSHOT</text><text x="55" y="572" font-size="14" font-weight="700" fill="#ffffff">09:41:22 UTC</text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#151515">
+    <text x="298" y="78" font-size="28" font-weight="900">Overview</text>
+    <text x="298" y="105" font-family="Menlo, monospace" font-size="13" fill="#77716d">LIVE SESSION INVENTORY / SYNTHETIC DATA</text>
+    <rect x="1012" y="52" width="130" height="38" fill="#ef3219"/><text x="1077" y="77" text-anchor="middle" font-size="14" font-weight="800" fill="#fff">REFRESH 10s</text>
+    <g stroke="#d9d6d2" stroke-width="2" fill="#fff">
+      <rect x="298" y="132" width="196" height="104"/><rect x="514" y="132" width="196" height="104"/><rect x="730" y="132" width="196" height="104"/><rect x="946" y="132" width="196" height="104"/>
+    </g>
+    <g font-family="Menlo, monospace">
+      <text x="318" y="160" font-size="12" fill="#77716d">SESSIONS</text><text x="318" y="209" font-size="36" font-weight="900">02</text>
+      <text x="534" y="160" font-size="12" fill="#77716d">ONLINE</text><text x="534" y="209" font-size="36" font-weight="900" fill="#ef3219">02</text>
+      <text x="750" y="160" font-size="12" fill="#77716d">BEACON P95</text><text x="750" y="209" font-size="28" font-weight="900">12.4s</text>
+      <text x="966" y="160" font-size="12" fill="#77716d">QUEUE</text><text x="966" y="209" font-size="36" font-weight="900">03</text>
+    </g>
+    <rect x="298" y="264" width="844" height="150" fill="#fff" stroke="#d9d6d2" stroke-width="2"/>
+    <text x="320" y="296" font-size="16" font-weight="900">ACTIVE SESSIONS</text>
+    <path d="M320 313H1120" stroke="#151515" stroke-width="2"/>
+    <g font-family="Menlo, monospace" font-size="14">
+      <text x="320" y="344" fill="#77716d">ID</text><text x="480" y="344" fill="#77716d">MODEL</text><text x="720" y="344" fill="#77716d">LAST SEEN</text><text x="930" y="344" fill="#77716d">STATE</text>
+      <text x="320" y="378" font-weight="700">a1f2c9</text><text x="480" y="378">Pixel 8 / API 35</text><text x="720" y="378">12 sec ago</text><text x="930" y="378" fill="#ef3219" font-weight="700">ONLINE</text>
+    </g>
+    <rect x="298" y="442" width="410" height="178" fill="#151515"/>
+    <text x="320" y="476" font-size="16" font-weight="900" fill="#fff">HEALTH / 24H</text>
+    <path d="M322 580 L380 560 L438 568 L496 523 L554 540 L612 500 L680 516" fill="none" stroke="#ef3219" stroke-width="4"/>
+    <path d="M322 580H680" stroke="#555"/>
+    <rect x="730" y="442" width="412" height="178" fill="#fff" stroke="#d9d6d2" stroke-width="2"/>
+    <text x="752" y="476" font-size="16" font-weight="900">RECENT EVENTS</text>
+    <g font-family="Menlo, monospace" font-size="13"><text x="752" y="512" fill="#77716d">09:41:22</text><text x="850" y="512">SCREEN  →  OK</text><text x="752" y="544" fill="#77716d">09:40:58</text><text x="850" y="544">INFO    →  OK</text><text x="752" y="576" fill="#77716d">09:40:31</text><text x="850" y="576">PING    →  PONG</text></g>
+  </g>
+  <path d="M292 118V86h32 M1108 86h34v32 M292 632v-32h32 M1108 600h34v32" fill="none" stroke="#ef3219" stroke-width="5"/>
+</svg>

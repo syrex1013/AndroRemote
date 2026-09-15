@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">AndroRemote CLI demo</title>
+  <desc id="desc">A synthetic terminal session showing a selected Android device, ping response, device information, and an operator prompt.</desc>
+  <rect width="1200" height="620" fill="#fbfaf8"/>
+  <path d="M62 66V38h28 M1110 38h28v28 M62 554v28h28 M1110 582h28v-28" fill="none" stroke="#ef3219" stroke-width="6"/>
+  <rect x="86" y="86" width="1028" height="448" fill="#151515"/>
+  <rect x="86" y="86" width="1028" height="40" fill="#242424"/>
+  <circle cx="112" cy="106" r="6" fill="#ef3219"/><circle cx="136" cy="106" r="6" fill="#d9d6d2"/><circle cx="160" cy="106" r="6" fill="#d9d6d2"/>
+  <text x="600" y="112" text-anchor="middle" font-family="Menlo, monospace" font-size="13" fill="#a6a6a6">androremote / operator session / DEMO DATA</text>
+  <g font-family="Menlo, Consolas, monospace" font-size="18">
+    <text x="120" y="164" fill="#ef3219">$</text><text x="144" y="164" fill="#ffffff">androremote ping</text>
+    <text x="120" y="198" fill="#ffffff">PONG  a1f2c9  Pixel 8  Android 15  12.4s</text>
+    <text x="120" y="246" fill="#ef3219">$</text><text x="144" y="246" fill="#ffffff">androremote id</text>
+    <text x="120" y="280" fill="#ffffff">OK id: a1f2c9</text>
+    <text x="120" y="312" fill="#ffffff">model: Pixel 8</text>
+    <text x="120" y="344" fill="#ffffff">sdk: 35   battery: 82%   storage: 61%</text>
+    <text x="120" y="392" fill="#ef3219">$</text><text x="144" y="392" fill="#ffffff">androremote screen /tmp/demo-screen.png</text>
+    <text x="120" y="426" fill="#ffffff">OK screen: 1080x2400  saved=/tmp/demo-screen.png</text>
+    <text x="120" y="474" fill="#ef3219">$</text><text x="144" y="474" fill="#ffffff">androremote</text><rect x="274" y="457" width="11" height="22" fill="#ef3219"/>
+  </g>
+  <text x="600" y="574" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800" letter-spacing="2" fill="#151515">OBSERVE · OPERATE · VERIFY</text>
+</svg>
