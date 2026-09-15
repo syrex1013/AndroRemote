@@ -175,6 +175,13 @@ export default function ScreenView() {
               <motion.img
                 key={img.slice(-32)}
                 ref={imgRef}
+                src={img}
+                alt="device screen"
+                initial={{ opacity: 0, scale: 0.995 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="max-w-full max-h-[calc(100vh-260px)] rounded cursor-crosshair touch-none select-none"
                 onLoad={(e) => {
                   // scaled agents report real bounds in the response and the
                   // JPEG is smaller — only old agents need the image size
